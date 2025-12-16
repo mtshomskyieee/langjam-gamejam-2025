@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dungeon Game</title>
+    <style>
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #menu-bar {
+            background: #2a2a2a;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid #444;
+        }
+        
+        .menu-button {
+            background: #444;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .menu-button:hover {
+            background: #555;
+        }
+        
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background: #333;
+            min-width: 200px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #555;
+            border-radius: 4px;
+            top: 100%;
+            left: 0;
+            margin-top: 5px;
+        }
+        
+        .dropdown-content.show {
+            display: block;
+        }
+        
+        .dropdown-content div {
+            padding: 10px;
+            border-bottom: 1px solid #444;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: calc(100vh - 50px);
+            overflow: hidden;
+        }
+        
+        #game-canvas {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            image-rendering: pixelated;
+        }
+        
+        #dialog-panel {
+            position: fixed;
+            right: -400px;
+            top: 60px;
+            width: 350px;
+            height: calc(100vh - 60px);
+            background: #2a2a2a;
+            border-left: 2px solid #444;
+            transition: right 0.3s;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        #dialog-panel.show {
+            right: 0;
+        }
+        
+        #dialog-content {
+            margin-bottom: 20px;
+        }
+        
+        #dialog-input {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+        
+        #dialog-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #444;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+            z-index: 10;
+        }
+        
+        #dialog-close:hover {
+            background: #555;
+        }
+        
+        .interaction-text {
+            position: absolute;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 100;
+            font-size: 12px;
+        }
+        
+        .popup-text {
+            position: absolute;
+            background: rgba(255,255,0,0.9);
+            color: #000;
+            padding: 5px 10px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 101;
+            font-size: 12px;
+            animation: fadeOut 3s forwards;
+        }
+        
+        @keyframes fadeOut {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        
+    </style>
+</head>
+<body>
+    
+    <div id="menu-bar">
+        <button class="menu-button" onclick="game.saveGame()">Save</button>
+        <button class="menu-button" onclick="document.getElementById('load-input').click()">
+            Load
+            <input type="file" id="load-input" accept=".json" style="display:none" onchange="game.loadGame(event)">
+        </button>
+        <div class="dropdown">
+            <button class="menu-button" onclick="toggleDropdown('status-dropdown')">Status</button>
+            <div id="status-dropdown" class="dropdown-content">
+                <div id="status-content"></div>
+            </div>
+        </div>
+        <div class="dropdown">
+            <button class="menu-button" onclick="toggleDropdown('inventory-dropdown')">Inventory</button>
+            <div id="inventory-dropdown" class="dropdown-content">
+                <div id="inventory-content"></div>
+            </div>
+        </div>
+        <div class="dropdown">
+            <button class="menu-button" onclick="toggleDropdown('chat-dropdown')">Chat History</button>
+            <div id="chat-dropdown" class="dropdown-content">
+                <div id="chat-content"></div>
+            </div>
+        </div>
+        <div class="dropdown">
+            <button class="menu-button" onclick="toggleDropdown('quest-dropdown')">Quest-Status</button>
+            <div id="quest-dropdown" class="dropdown-content">
+                <div id="quest-content"></div>
+            </div>
+        </div>
+    </div>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+    </div>
+    <div id="dialog-panel">
+        <button id="dialog-close" onclick="game.closeDialog()">× Close</button>
+        <div id="dialog-content"></div>
+        <input type="text" id="dialog-input" placeholder="Type message..." style="display:none" onkeypress="handleDialogInput(event)">
+    </div>
+    <script>
+        function toggleDropdown(id) {
+            const dropdown = document.getElementById(id);
+            dropdown.classList.toggle('show');
+        }
+        
+        function handleDialogInput(event) {
+            if (event.key === 'Enter') {
+                const input = document.getElementById('dialog-input');
+                const message = input.value;
+                if (message.trim()) {
+                    game.handleDialogInput(message);
+                    input.value = '';
+                }
+            }
+        }
+        
+        // Close dropdowns when clicking outside
+        window.onclick = function(event) {
+            if (!event.target.matches('.menu-button')) {
+                const dropdowns = document.getElementsByClassName('dropdown-content');
+                for (let dropdown of dropdowns) {
+                    if (dropdown.classList.contains('show')) {
+                        dropdown.classList.remove('show');
+                    }
+                }
+            }
+        }
+    </script>
+        
+    <script>
+        const INITIAL_GAME_STATE = {
+  "world": {
+    "width": 20,
+    "height": 20
+  },
+  "user": {
+    "unique_name": "player",
+    "position": [
+      5,
+      5
+    ],
+    "health": 100,
+    "experience": 0,
+    "level": 1,
+    "inventory": [],
+    "context": "hero"
+  },
+  "terrain": {},
+  "furniture": [
+    {
+      "name": "grass",
+      "placement": {
+        "type": "all"
+      }
+    }
+  ],
+  "mythics": [],
+  "items": [],
+  "monsters": [],
+  "npcs": [
+    {
+      "unique_name": "echo",
+      "npc_type": "npc-dynamic",
+      "context": "You are Echo, a helpful assistant that repeats and responds to the user's messages.",
+      "response": null,
+      "state_machine": "idle",
+      "emoji": "\ud83d\udc64",
+      "agenda": null,
+      "conditions": [],
+      "catch_message": "Not now",
+      "conversation_history": [],
+      "position": [
+        10,
+        10
+      ]
+    }
+  ],
+  "variables": {},
+  "quests": [],
+  "rules": [],
+  "end_game": {
+    "conditions": [],
+    "win_message": null,
+    "lose_message": null
+  }
+};
+
+        // Game Engine
+        class DungeonGame {
+            constructor() {
+                this.state = JSON.parse(JSON.stringify(INITIAL_GAME_STATE));
+                this.canvas = document.getElementById('game-canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.cellSize = 40;
+                this.zoom = 1.0;
+                this.viewportX = 0;
+                this.viewportY = 0;
+                this.panning = false;
+                this.currentDialogNPC = null;
+                this.interactionTexts = [];
+                this.popupTexts = [];
+                this.llmEndpoint = "http://localhost:1234/v1/chat/completions";
+                this.llmToken = "anything";
+                this.npcInteractionHistory = {};
+                this.lastDialogOpenTime = 0;
+                
+                this.init();
+                this.setupEventListeners();
+                this.gameLoop();
+            }
+            
+            init() {
+                this.resizeCanvas();
+                this.placeRandomEntities();
+                this.updateUI();
+            }
+            
+            resizeCanvas() {
+                const container = document.getElementById('game-container');
+                this.canvas.width = container.clientWidth;
+                this.canvas.height = container.clientHeight;
+            }
+            
+            placeRandomEntities() {
+                // Place random mythics
+                for (let mythic of this.state.mythics) {
+                    if (mythic.placement && mythic.placement.type === 'random') {
+                        if (Math.random() * 100 < mythic.placement.percentage) {
+                            mythic.position = [
+                                Math.floor(Math.random() * this.state.world.width),
+                                Math.floor(Math.random() * this.state.world.height)
+                            ];
+                        }
+                    }
+                }
+                
+                // Place random items
+                for (let item of this.state.items) {
+                    if (item.placement && item.placement.type === 'random') {
+                        if (Math.random() * 100 < item.placement.percentage) {
+                            item.position = [
+                                Math.floor(Math.random() * this.state.world.width),
+                                Math.floor(Math.random() * this.state.world.height)
+                            ];
+                        }
+                    }
+                }
+                
+                // Place random monsters
+                for (let monster of this.state.monsters) {
+                    if (monster.placement && monster.placement.type === 'random') {
+                        if (Math.random() * 100 < monster.placement.percentage) {
+                            monster.position = [
+                                Math.floor(Math.random() * this.state.world.width),
+                                Math.floor(Math.random() * this.state.world.height)
+                            ];
+                        }
+                    }
+                }
+            }
+            
+            setupEventListeners() {
+                // Movement
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowUp' && !e.shiftKey) {
+                        this.moveUser(0, -1);
+                    } else if (e.key === 'ArrowDown' && !e.shiftKey) {
+                        this.moveUser(0, 1);
+                    } else if (e.key === 'ArrowLeft' && !e.shiftKey) {
+                        this.moveUser(-1, 0);
+                    } else if (e.key === 'ArrowRight' && !e.shiftKey) {
+                        this.moveUser(1, 0);
+                    } else if (e.key === 'Enter' || e.key === ' ') {
+                        this.handleEnterKey();
+                    } else if (e.key === 'Escape') {
+                        this.closeDialog();
+                    } else if (e.key === '+' || e.key === '=') {
+                        this.zoomIn();
+                    } else if (e.key === '-') {
+                        this.zoomOut();
+                    }
+                });
+                
+                // Panning
+                let shiftPressed = false;
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Shift') shiftPressed = true;
+                    if (shiftPressed && e.key.startsWith('Arrow')) {
+                        this.panning = true;
+                        if (e.key === 'ArrowUp') this.viewportY -= 5;
+                        if (e.key === 'ArrowDown') this.viewportY += 5;
+                        if (e.key === 'ArrowLeft') this.viewportX -= 5;
+                        if (e.key === 'ArrowRight') this.viewportX += 5;
+                    }
+                });
+                document.addEventListener('keyup', (e) => {
+                    if (e.key === 'Shift') {
+                        shiftPressed = false;
+                        this.panning = false;
+                        this.centerOnUser();
+                    }
+                });
+            }
+            
+            moveUser(dx, dy) {
+                const newX = this.state.user.position[0] + dx;
+                const newY = this.state.user.position[1] + dy;
+                
+                // Check boundaries (allow 0 to width-1 and 0 to height-1)
+                if (newX < 0 || newX >= this.state.world.width ||
+                    newY < 0 || newY >= this.state.world.height) {
+                    return;
+                }
+                
+                // Check collisions
+                if (!this.canMoveTo(newX, newY)) {
+                    return;
+                }
+                
+                this.state.user.position[0] = newX;
+                this.state.user.position[1] = newY;
+                
+                // Check for item/mythic pickup
+                this.checkPickups();
+                
+                // Check for interactions
+                this.checkInteractions();
+                
+                // Update viewport
+                if (!this.panning) {
+                    this.centerOnUser();
+                }
+                
+                // Evaluate rules and quests
+                this.evaluateRules();
+                this.evaluateQuests();
+                this.checkEndGame();
+                
+                this.updateUI();
+            }
+            
+            canMoveTo(x, y) {
+                // Check terrain (walls, stone are impassible)
+                // For now, assume all terrain is passible except explicit walls
+                
+                // Check NPCs
+                for (let npc of this.state.npcs) {
+                    if (npc.position && npc.position[0] === x && npc.position[1] === y) {
+                        return false; // Can't walk through NPCs
+                    }
+                }
+                
+                // Check monsters
+                for (let monster of this.state.monsters) {
+                    if (!monster.defeated && monster.position && 
+                        monster.position[0] === x && monster.position[1] === y) {
+                        return false; // Can't walk through monsters
+                    }
+                }
+                
+                return true;
+            }
+            
+            checkPickups() {
+                const userPos = this.state.user.position;
+                let pickedUpSomething = false;
+                
+                // Check mythics
+                for (let mythic of this.state.mythics) {
+                    if (!mythic.picked_up && mythic.position &&
+                        mythic.position[0] === userPos[0] && mythic.position[1] === userPos[1]) {
+                        if (mythic.can_pickup) {
+                            this.state.user.inventory.push(mythic.unique_name);
+                            mythic.picked_up = true;
+                            pickedUpSomething = true;
+                            this.showInteractionText(userPos[0], userPos[1], `Picked up ${mythic.unique_name}`);
+                        } else {
+                            this.showInteractionText(userPos[0], userPos[1], mythic.catch_message);
+                        }
+                    }
+                }
+                
+                // Check items
+                for (let item of this.state.items) {
+                    if (!item.picked_up && item.position &&
+                        item.position[0] === userPos[0] && item.position[1] === userPos[1]) {
+                        if (item.can_pickup) {
+                            this.state.user.inventory.push(item.unique_name);
+                            item.picked_up = true;
+                            pickedUpSomething = true;
+                            this.showInteractionText(userPos[0], userPos[1], `Picked up ${item.unique_name}`);
+                        } else {
+                            this.showInteractionText(userPos[0], userPos[1], item.catch_message);
+                        }
+                    }
+                }
+                
+                // If we picked something up, check end game conditions
+                if (pickedUpSomething) {
+                    this.checkEndGame();
+                }
+            }
+            
+            checkInteractions() {
+                const userPos = this.state.user.position;
+                
+                // Check NPCs at same position
+                for (let npc of this.state.npcs) {
+                    if (npc.position && npc.position[0] === userPos[0] && npc.position[1] === userPos[1]) {
+                        // Auto-trigger interaction based on rules
+                        // For now, just mark as available for interaction
+                    }
+                }
+            }
+            
+            handleEnterKey() {
+                const userPos = this.state.user.position;
+                
+                // Check for monsters at same position or adjacent (combat)
+                for (let monster of this.state.monsters) {
+                    if (!monster.defeated && monster.position) {
+                        const dx = Math.abs(monster.position[0] - userPos[0]);
+                        const dy = Math.abs(monster.position[1] - userPos[1]);
+                        // Attack if on same cell or adjacent (distance <= 1)
+                        if (dx <= 1 && dy <= 1 && (dx + dy) <= 1) {
+                            this.attackMonster(monster);
+                            return;
+                        }
+                    }
+                }
+                
+                // Check for NPCs at same position or adjacent
+                // Don't interact if dialog is already open
+                const panel = document.getElementById('dialog-panel');
+                if (panel && panel.classList.contains('show')) {
+                    return; // Dialog already open, don't trigger new interaction
+                }
+                
+                for (let npc of this.state.npcs) {
+                    if (npc.position) {
+                        const dx = Math.abs(npc.position[0] - userPos[0]);
+                        const dy = Math.abs(npc.position[1] - userPos[1]);
+                        // Interact if on same cell or adjacent (distance <= 1)
+                        if (dx <= 1 && dy <= 1 && (dx + dy) <= 1) {
+                            this.interactWithNPC(npc);
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            attackMonster(monster) {
+                // Default punch attack does 1 damage
+                let damage = 1;
+                let weaponUsed = 'punch';
+                
+                // Check if user has items that can be used as weapons
+                // For now, use default punch attack
+                // TODO: Support "attack <monster> with <item>" command
+                
+                // Apply damage
+                monster.health -= damage;
+                
+                // Show feedback
+                this.showInteractionText(
+                    monster.position[0],
+                    monster.position[1],
+                    `You attack ${monster.unique_name} for ${damage} damage!`
+                );
+                
+                // Check if monster is defeated
+                if (monster.health <= 0) {
+                    monster.defeated = true;
+                    const expGained = monster.experience || 0;
+                    this.state.user.experience += expGained;
+                    
+                    this.showInteractionText(
+                        monster.position[0],
+                        monster.position[1],
+                        `You defeated ${monster.unique_name}! Gained ${expGained} experience!`
+                    );
+                    
+                    // Remove monster from blocking position
+                    monster.position = null;
+                } else {
+                    // Monster counter-attacks (simple: 1 damage to user)
+                    this.state.user.health -= 1;
+                    this.showInteractionText(
+                        this.state.user.position[0],
+                        this.state.user.position[1],
+                        `${monster.unique_name} attacks you for 1 damage!`
+                    );
+                    
+                    // Check if user is defeated
+                    if (this.state.user.health <= 0) {
+                        this.checkEndGame(); // This will trigger lose condition if health <= 0
+                    }
+                }
+                
+                this.updateUI();
+                this.checkEndGame();
+            }
+            
+            interactWithNPC(npc) {
+                const panel = document.getElementById('dialog-panel');
+                
+                // If dialog is already open for this NPC, don't reopen it
+                if (this.currentDialogNPC && this.currentDialogNPC.unique_name === npc.unique_name && panel.classList.contains('show')) {
+                    return;
+                }
+                
+                this.currentDialogNPC = npc;
+                panel.classList.add('show');
+                this.lastDialogOpenTime = Date.now();
+                
+                if (npc.npc_type === 'npc-static') {
+                    this.showStaticNPCDialog(npc);
+                } else if (npc.npc_type === 'npc-dynamic') {
+                    this.showDynamicNPCDialog(npc);
+                } else if (npc.npc_type === 'npc-state-machine') {
+                    this.showStateMachineNPCDialog(npc);
+                }
+            }
+            
+            showStaticNPCDialog(npc) {
+                const content = document.getElementById('dialog-content');
+                const input = document.getElementById('dialog-input');
+                input.style.display = 'none';
+                
+                // Check conditions
+                let response = npc.response;
+                for (let condition of npc.conditions) {
+                    if (this.checkNPCCondition(condition)) {
+                        if (condition.then_action === 'response') {
+                            response = condition.action_value;
+                            break;
+                        }
+                    }
+                }
+                
+                content.innerHTML = `<h3>${npc.unique_name}</h3><p>${response}</p>`;
+            }
+            
+            showDynamicNPCDialog(npc) {
+                const content = document.getElementById('dialog-content');
+                const input = document.getElementById('dialog-input');
+                input.style.display = 'block';
+                input.focus();
+                
+                if (!this.npcInteractionHistory[npc.unique_name]) {
+                    this.npcInteractionHistory[npc.unique_name] = [];
+                }
+                
+                let contextText = npc.context || '';
+                if (npc.agenda) {
+                    contextText += '\nAgenda: ' + npc.agenda;
+                }
+                
+                content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation"></div>`;
+            }
+            
+            showStateMachineNPCDialog(npc) {
+                const content = document.getElementById('dialog-content');
+                const input = document.getElementById('dialog-input');
+                input.style.display = 'none';
+                
+                // Simple state machine - use state to determine response
+                let response = npc.response || 'Hello!';
+                if (npc.state_machine === 'idle') {
+                    response = 'I am idle.';
+                }
+                
+                content.innerHTML = `<h3>${npc.unique_name}</h3><p>${response}</p>`;
+            }
+            
+            handleDialogInput(message) {
+                if (!this.currentDialogNPC || this.currentDialogNPC.npc_type !== 'npc-dynamic') {
+                    return;
+                }
+                
+                const npc = this.currentDialogNPC;
+                const conversationDiv = document.getElementById('conversation');
+                
+                // Add user message
+                conversationDiv.innerHTML += `<p><strong>You:</strong> ${message}</p>`;
+                
+                // Send to LLM (if configured)
+                if (this.llmEndpoint && this.llmToken) {
+                    this.sendToLLM(npc, message, conversationDiv);
+                } else {
+                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> I'm having trouble thinking right now. Can we talk later?</p>`;
+                }
+            }
+            
+            async sendToLLM(npc, message, conversationDiv) {
+                try {
+                    const history = this.npcInteractionHistory[npc.unique_name] || [];
+                    history.push({role: 'user', content: message});
+                    
+                    // Check if endpoint is localhost and we're running from file://
+                    const isLocalhost = this.llmEndpoint && (this.llmEndpoint.includes('localhost') || this.llmEndpoint.includes('127.0.0.1'));
+                    const isFileProtocol = window.location.protocol === 'file:';
+                    
+                    if (isLocalhost && isFileProtocol) {
+                        conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em>Note: To use localhost LLM, please serve this HTML file from a local web server (e.g., python -m http.server) instead of opening it directly. CORS policy blocks file:// requests to localhost.</em></p>`;
+                        return;
+                    }
+                    
+                    const fetchOptions = {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.llmToken}`
+                        },
+                        body: JSON.stringify({
+                            messages: [
+                                {role: 'system', content: npc.context || '' + (npc.agenda ? '\nAgenda: ' + npc.agenda : '')},
+                                ...history.slice(-10) // Last 10 messages
+                            ]
+                        })
+                    };
+                    
+                    // For localhost endpoints, explicitly set mode
+                    if (isLocalhost) {
+                        fetchOptions.mode = 'cors';
+                    }
+                    
+                    const response = await fetch(this.llmEndpoint, fetchOptions);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    const llmResponse = data.choices?.[0]?.message?.content || "I'm having trouble thinking right now.";
+                    
+                    history.push({role: 'assistant', content: llmResponse});
+                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${llmResponse}</p>`;
+                } catch (error) {
+                    console.error('LLM request error:', error);
+                    let errorMsg = "I'm having trouble thinking right now. Can we talk later?";
+                    
+                    const errorStr = error.toString();
+                    if (errorStr.includes('CORS') || errorStr.includes('preflight')) {
+                        errorMsg = `CORS Error: The LLM server at ${this.llmEndpoint} needs to allow CORS from ${window.location.origin}. The server must respond to OPTIONS requests with these headers: Access-Control-Allow-Origin: ${window.location.origin}, Access-Control-Allow-Methods: POST, Access-Control-Allow-Headers: Content-Type, Authorization. Please configure your LLM server to allow CORS.`;
+                    } else if (errorStr.includes('Failed to fetch') || errorStr.includes('ERR_FAILED')) {
+                        errorMsg = `Connection Error: Could not connect to LLM server at ${this.llmEndpoint}. Please ensure: 1) The server is running, 2) The URL is correct, 3) The server allows CORS from ${window.location.origin}`;
+                    } else if (error.message) {
+                        errorMsg = `Error: ${error.message}`;
+                    }
+                    
+                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em style="color: #ff6b6b;">${errorMsg}</em></p>`;
+                }
+            }
+            
+            checkNPCCondition(condition) {
+                if (condition.condition_type === 'item') {
+                    return this.state.user.inventory.includes(condition.value);
+                } else if (condition.condition_type === 'experience') {
+                    return this.compareValues(this.state.user.experience, condition.operator, condition.value);
+                } else if (condition.condition_type === 'health') {
+                    return this.compareValues(this.state.user.health, condition.operator, condition.value);
+                }
+                return false;
+            }
+            
+            closeDialog() {
+                // Prevent closing if dialog was just opened (within last 200ms)
+                // This prevents accidental closes from key repeat or rapid key presses
+                const timeSinceOpen = Date.now() - this.lastDialogOpenTime;
+                if (timeSinceOpen < 200) {
+                    return;
+                }
+                
+                const panel = document.getElementById('dialog-panel');
+                if (panel) {
+                    panel.classList.remove('show');
+                }
+                this.currentDialogNPC = null;
+                this.lastDialogOpenTime = 0;
+                // Clear dialog content to ensure clean state
+                const content = document.getElementById('dialog-content');
+                if (content) {
+                    content.innerHTML = '';
+                }
+                const input = document.getElementById('dialog-input');
+                if (input) {
+                    input.style.display = 'none';
+                    input.value = '';
+                }
+            }
+            
+            compareValues(a, op, b) {
+                switch(op) {
+                    case '>': return a > b;
+                    case '<': return a < b;
+                    case '>=': return a >= b;
+                    case '<=': return a <= b;
+                    case '==': return a == b;
+                    case '!=': return a != b;
+                    default: return a == b;
+                }
+            }
+            
+            evaluateRules() {
+                for (let rule of this.state.rules) {
+                    if (this.checkConditions(rule.conditions)) {
+                        this.executeAction(rule.action);
+                    }
+                }
+            }
+            
+            evaluateQuests() {
+                for (let quest of this.state.quests) {
+                    if (!quest.completed && this.checkConditions(quest.conditions)) {
+                        this.executeAction(quest.action);
+                        quest.completed = true;
+                        quest.status = 'completed';
+                    }
+                }
+            }
+            
+            checkConditions(conditions) {
+                for (let condition of conditions) {
+                    if (!this.checkCondition(condition)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            
+            checkCondition(condition) {
+                if (condition.type === 'position') {
+                    const entity = this.getEntity(condition.entity);
+                    if (!entity || !entity.position) return false;
+                    return entity.position[0] === condition.position[0] &&
+                           entity.position[1] === condition.position[1];
+                } else if (condition.type === 'has') {
+                    if (condition.entity === 'user') {
+                        if (typeof condition.value === 'string') {
+                            return this.state.user.inventory.includes(condition.value);
+                        }
+                    }
+                } else if (condition.type === 'comparison') {
+                    const entity = this.getEntity(condition.entity);
+                    if (!entity) return false;
+                    const attr = condition.value; // This should be the attribute name
+                    const value = entity[attr] || 0;
+                    return this.compareValues(value, condition.operator, condition.value);
+                }
+                return false;
+            }
+            
+            getEntity(name) {
+                if (name === 'user') return this.state.user;
+                for (let npc of this.state.npcs) {
+                    if (npc.unique_name === name) return npc;
+                }
+                for (let monster of this.state.monsters) {
+                    if (monster.unique_name === name) return monster;
+                }
+                for (let item of this.state.items) {
+                    if (item.unique_name === name) return item;
+                }
+                for (let mythic of this.state.mythics) {
+                    if (mythic.unique_name === name) return mythic;
+                }
+                return null;
+            }
+            
+            executeAction(action) {
+                if (action.type === 'level up') {
+                    this.state.user.level += 1;
+                    this.showInteractionText(
+                        this.state.user.position[0],
+                        this.state.user.position[1],
+                        'Level Up!'
+                    );
+                } else if (action.type === 'talk') {
+                    // Talk action - handled by interactions
+                }
+            }
+            
+            checkEndGame() {
+                // Check if user is dead (health <= 0)
+                if (this.state.user.health <= 0) {
+                    // Check for lose condition
+                    if (this.state.end_game && this.state.end_game.conditions) {
+                        for (let endCondition of this.state.end_game.conditions) {
+                            if (endCondition.result === 'die and lose the game') {
+                                this.endGame(false);
+                                return;
+                            }
+                        }
+                    }
+                    // Default lose message if no specific condition
+                    this.endGame(false);
+                    return;
+                }
+                
+                if (!this.state.end_game || !this.state.end_game.conditions) return;
+                
+                // Group conditions by result type
+                const winConditions = [];
+                const loseConditions = [];
+                
+                for (let endCondition of this.state.end_game.conditions) {
+                    if (endCondition.result === 'win the game') {
+                        winConditions.push(endCondition.condition);
+                    } else if (endCondition.result === 'die and lose the game') {
+                        loseConditions.push(endCondition.condition);
+                    }
+                }
+                
+                // Check win conditions (ALL must be true - this handles AND conditions)
+                if (winConditions.length > 0) {
+                    let allWinConditionsMet = true;
+                    for (let condition of winConditions) {
+                        if (!this.checkCondition(condition)) {
+                            allWinConditionsMet = false;
+                            break;
+                        }
+                    }
+                    if (allWinConditionsMet) {
+                        this.endGame(true);
+                        return;
+                    }
+                }
+                
+                // Check lose conditions (all must be true)
+                if (loseConditions.length > 0) {
+                    let allLoseConditionsMet = true;
+                    for (let condition of loseConditions) {
+                        if (!this.checkCondition(condition)) {
+                            allLoseConditionsMet = false;
+                            break;
+                        }
+                    }
+                    if (allLoseConditionsMet) {
+                        this.endGame(false);
+                        return;
+                    }
+                }
+            }
+            
+            endGame(won) {
+                const message = won ? 
+                    (this.state.end_game.win_message || 'You won!') :
+                    (this.state.end_game.lose_message || 'You lost!');
+                alert(message);
+            }
+            
+            centerOnUser() {
+                // Ensure viewport stays within bounds
+                this.viewportX = Math.max(0, Math.min(this.state.user.position[0], this.state.world.width - 1));
+                this.viewportY = Math.max(0, Math.min(this.state.user.position[1], this.state.world.height - 1));
+            }
+            
+            zoomIn() {
+                this.zoom = Math.min(this.zoom * 1.2, 3.0);
+            }
+            
+            zoomOut() {
+                this.zoom = Math.max(this.zoom / 1.2, 0.5);
+            }
+            
+            showInteractionText(x, y, text) {
+                const textObj = {
+                    x: x,
+                    y: y,
+                    text: text,
+                    time: Date.now()
+                };
+                this.interactionTexts.push(textObj);
+                setTimeout(() => {
+                    const index = this.interactionTexts.indexOf(textObj);
+                    if (index > -1) this.interactionTexts.splice(index, 1);
+                }, 2000);
+            }
+            
+            updateUI() {
+                // Update status
+                const statusContent = document.getElementById('status-content');
+                statusContent.innerHTML = `
+                    <div>Health: ${this.state.user.health}</div>
+                    <div>Experience: ${this.state.user.experience}</div>
+                    <div>Level: ${this.state.user.level}</div>
+                    <div>Position: (${this.state.user.position[0]}, ${this.state.user.position[1]})</div>
+                `;
+                
+                // Update inventory
+                const inventoryContent = document.getElementById('inventory-content');
+                if (this.state.user.inventory.length === 0) {
+                    inventoryContent.innerHTML = '<div>Inventory is empty</div>';
+                } else {
+                    inventoryContent.innerHTML = this.state.user.inventory.map(item => 
+                        `<div>${item}</div>`
+                    ).join('');
+                }
+                
+                // Update quests
+                const questContent = document.getElementById('quest-content');
+                if (this.state.quests.length === 0) {
+                    questContent.innerHTML = '<div>No quests</div>';
+                } else {
+                    questContent.innerHTML = this.state.quests.map(quest => 
+                        `<div><strong>Quest ${quest.id}</strong>: ${quest.status}</div>`
+                    ).join('');
+                }
+            }
+            
+            render() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                const cellSize = this.cellSize * this.zoom;
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                
+                // Calculate visible grid
+                const viewWidth = Math.ceil(this.canvas.width / cellSize) + 2;
+                const viewHeight = Math.ceil(this.canvas.height / cellSize) + 2;
+                const startX = Math.max(0, Math.floor(this.viewportX - viewWidth / 2));
+                const startY = Math.max(0, Math.floor(this.viewportY - viewHeight / 2));
+                const endX = Math.min(this.state.world.width, startX + viewWidth);
+                const endY = Math.min(this.state.world.height, startY + viewHeight);
+                
+                // Draw terrain (grass by default)
+                this.ctx.fillStyle = '#4a7c59';
+                for (let y = startY; y < endY; y++) {
+                    for (let x = startX; x < endX; x++) {
+                        const screenX = centerX + (x - this.viewportX) * cellSize;
+                        const screenY = centerY + (y - this.viewportY) * cellSize;
+                        this.ctx.fillRect(screenX, screenY, cellSize, cellSize);
+                    }
+                }
+                
+                // Draw furniture
+                for (let furniture of this.state.furniture) {
+                    if (furniture.placement.type === 'coordinate') {
+                        const pos = furniture.placement.coord;
+                        const screenX = centerX + (pos[0] - this.viewportX) * cellSize;
+                        const screenY = centerY + (pos[1] - this.viewportY) * cellSize;
+                        if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
+                            screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
+                            this.ctx.font = `${cellSize * 0.8}px Arial`;
+                            this.ctx.fillText('🏠', screenX, screenY + cellSize * 0.8);
+                        }
+                    }
+                }
+                
+                // Draw items
+                for (let item of this.state.items) {
+                    if (!item.picked_up && item.position) {
+                        const screenX = centerX + (item.position[0] - this.viewportX) * cellSize;
+                        const screenY = centerY + (item.position[1] - this.viewportY) * cellSize;
+                        if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
+                            screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
+                            this.ctx.font = `${cellSize * 0.8}px Arial`;
+                            this.ctx.fillText('💎', screenX, screenY + cellSize * 0.8);
+                        }
+                    }
+                }
+                
+                // Draw mythics
+                for (let mythic of this.state.mythics) {
+                    if (!mythic.picked_up && mythic.position) {
+                        const screenX = centerX + (mythic.position[0] - this.viewportX) * cellSize;
+                        const screenY = centerY + (mythic.position[1] - this.viewportY) * cellSize;
+                        if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
+                            screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
+                            this.ctx.font = `${cellSize * 0.8}px Arial`;
+                            this.ctx.fillText('💠', screenX, screenY + cellSize * 0.8);
+                        }
+                    }
+                }
+                
+                // Draw monsters
+                for (let monster of this.state.monsters) {
+                    if (!monster.defeated && monster.position) {
+                        const screenX = centerX + (monster.position[0] - this.viewportX) * cellSize;
+                        const screenY = centerY + (monster.position[1] - this.viewportY) * cellSize;
+                        if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
+                            screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
+                            this.ctx.font = `${cellSize * 0.8}px Arial`;
+                            this.ctx.fillText('👹', screenX, screenY + cellSize * 0.8);
+                        }
+                    }
+                }
+                
+                // Draw NPCs
+                for (let npc of this.state.npcs) {
+                    if (npc.position) {
+                        const screenX = centerX + (npc.position[0] - this.viewportX) * cellSize;
+                        const screenY = centerY + (npc.position[1] - this.viewportY) * cellSize;
+                        if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
+                            screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
+                            this.ctx.font = `${cellSize * 0.8}px Arial`;
+                            this.ctx.fillText(npc.emoji, screenX, screenY + cellSize * 0.8);
+                        }
+                    }
+                }
+                
+                // Draw user
+                const userScreenX = centerX + (this.state.user.position[0] - this.viewportX) * cellSize;
+                const userScreenY = centerY + (this.state.user.position[1] - this.viewportY) * cellSize;
+                this.ctx.font = `${cellSize * 0.8}px Arial`;
+                this.ctx.fillText('🧙', userScreenX, userScreenY + cellSize * 0.8);
+                
+                // Draw interaction texts
+                for (let textObj of this.interactionTexts) {
+                    const screenX = centerX + (textObj.x - this.viewportX) * cellSize;
+                    const screenY = centerY + (textObj.y - this.viewportY) * cellSize - 20;
+                    this.ctx.fillStyle = '#fff';
+                    this.ctx.font = '12px Arial';
+                    this.ctx.fillText(textObj.text, screenX, screenY);
+                    this.ctx.fillStyle = '#000';
+                }
+            }
+            
+            gameLoop() {
+                this.render();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            saveGame() {
+                const saveData = {
+                    version: '1.0',
+                    timestamp: new Date().toISOString(),
+                    game_state: this.state
+                };
+                const blob = new Blob([JSON.stringify(saveData, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'game_save.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+            
+            loadGame(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const saveData = JSON.parse(e.target.result);
+                        this.state = saveData.game_state;
+                        this.updateUI();
+                        alert('Game loaded successfully');
+                    } catch (error) {
+                        alert('Failed to load game: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        // Initialize game
+        let game;
+        window.addEventListener('load', () => {
+            game = new DungeonGame();
+        });
+        
+    </script>
+</body>
+</html>
