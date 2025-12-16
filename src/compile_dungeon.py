@@ -2347,6 +2347,14 @@ class CodeGenerator:
                     }
                 }
                 
+                // If response contains "|", randomly select one phrase
+                if (response && response.includes('|')) {
+                    const phrases = response.split('|').map(p => p.trim()).filter(p => p.length > 0);
+                    if (phrases.length > 0) {
+                        response = phrases[Math.floor(Math.random() * phrases.length)];
+                    }
+                }
+                
                 content.innerHTML = `<h3>${npc.unique_name}</h3><p>${response}</p>`;
             }
             
