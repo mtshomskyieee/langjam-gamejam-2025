@@ -512,7 +512,7 @@ class Rule(ASTNode):
 
 @dataclass
 class Condition(ASTNode):
-    type: str  # 'position', 'has', 'comparison'
+    type: str  # 'position', 'has', 'comparison', 'talked_to', 'responded_to'
     entity: str
     operator: Optional[str] = None
     value: Any = None
@@ -534,6 +534,7 @@ class QuestsSection(ASTNode):
 
 @dataclass
 class Quest(ASTNode):
+    name: Optional[str] = None
     conditions: List[Condition] = field(default_factory=list)
     action: Action = None
 
@@ -820,7 +821,11 @@ class Parser:
                         self.expect(TokenType.UP)
                         self.expect(TokenType.BY)
                         self.expect(TokenType.THE)
-                        self.expect(TokenType.IDENTIFIER)  # 'user'
+                        # Accept either USER token or IDENTIFIER for 'user'
+                        if self.current_token().type == TokenType.USER:
+                            self.advance()
+                        else:
+                            self.expect(TokenType.IDENTIFIER)  # 'user'
                         can_pickup = True
                 elif self.current_token().type == TokenType.DAMAGE:
                     self.advance()
@@ -1054,6 +1059,14 @@ class Parser:
         else:
             entity = self.expect(TokenType.IDENTIFIER).value
         
+        # Check for "responded" or "responds" first (before other condition types)
+        # This handles "wizard responded" where wizard is the entity
+        if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value in ['responded', 'responds']:
+            # "wizard responded" or "wizard responds" -> Condition('responded_to', 'wizard', None, None)
+            self.advance()  # consume 'responded' or 'responds'
+            npc_name = entity  # The entity is the NPC name
+            return Condition('responded_to', npc_name, None, None)
+        
         if self.current_token().type == TokenType.IS:
             self.advance()
             self.expect(TokenType.AT)
@@ -1080,6 +1093,12 @@ class Parser:
                 # Simple has check
                 value = self.parse_value()
                 return Condition('has', entity, None, value)
+        elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'talked':
+            # "user talked to wizard" -> Condition('talked_to', 'user', None, 'wizard')
+            self.advance()  # consume 'talked'
+            self.expect(TokenType.TO)
+            npc_name = self.expect(TokenType.IDENTIFIER).value
+            return Condition('talked_to', entity, None, npc_name)
         else:
             raise SyntaxError(f"Unexpected condition at line {self.current_token().line}")
     
@@ -1102,12 +1121,22 @@ class Parser:
         self.expect(TokenType.COLON)
         
         quests = []
-        while self.current_token().type == TokenType.IF:
-            quests.append(self.parse_quest())
+        # Support both named quests (name: if ...) and unnamed quests (if ...)
+        while self.current_token().type in [TokenType.IF, TokenType.IDENTIFIER]:
+            # Check if this is a named quest (identifier followed by colon)
+            quest_name = None
+            if self.current_token().type == TokenType.IDENTIFIER:
+                # Peek ahead to see if next token is COLON
+                if self.peek_token().type == TokenType.COLON:
+                    quest_name = self.current_token().value
+                    self.advance()  # consume the identifier
+                    self.advance()  # consume the colon
+            
+            quests.append(self.parse_quest(quest_name))
         
         return QuestsSection(quests)
     
-    def parse_quest(self) -> Quest:
+    def parse_quest(self, name: Optional[str] = None) -> Quest:
         conditions = []
         action = None
         
@@ -1121,7 +1150,7 @@ class Parser:
         self.expect(TokenType.THEN)
         action = self.parse_action()
         
-        return Quest(conditions, action)
+        return Quest(name, conditions, action)
     
     def parse_end_game_section(self) -> EndGameSection:
         self.expect(TokenType.END_GAME)
@@ -1593,7 +1622,8 @@ class CodeGenerator:
                 'experience': 0,
                 'level': 1,
                 'inventory': [],
-                'context': init.user.context if init.user else None
+                'context': init.user.context if init.user else None,
+                'talked_to_npcs': []
             },
             'terrain': {},
             'furniture': [],
@@ -1676,7 +1706,8 @@ class CodeGenerator:
                 'agenda': npc.agenda,
                 'conditions': [self.npc_condition_to_dict(c) for c in npc.conditions],
                 'catch_message': npc.catch_message or "Not now",
-                'conversation_history': []
+                'conversation_history': [],
+                'has_responded': False
             }
             # Set NPC position from placement
             if npc.placement:
@@ -1698,8 +1729,10 @@ class CodeGenerator:
         # Add quests
         if self.program.quests_section:
             for i, quest in enumerate(self.program.quests_section.quests):
+                # Use quest name if provided, otherwise use quest_{i}
+                quest_id = quest.name if quest.name else f'quest_{i}'
                 state['quests'].append({
-                    'id': f'quest_{i}',
+                    'id': quest_id,
                     'conditions': [self.condition_to_dict(c) for c in quest.conditions],
                     'action': self.action_to_dict(quest.action),
                     'status': 'active',
@@ -1936,8 +1969,31 @@ class CodeGenerator:
             }
             
             canMoveTo(x, y) {
-                // Check terrain (walls, stone are impassible)
-                // For now, assume all terrain is passible except explicit walls
+                // Check furniture (walls, stone are impassible)
+                for (let furniture of this.state.furniture) {
+                    if (furniture.placement.type === 'coordinate') {
+                        const pos = furniture.placement.coord;
+                        if (pos[0] === x && pos[1] === y) {
+                            // Check if furniture blocks movement (walls, stone do)
+                            if (furniture.name === 'wall' || furniture.name === 'stone') {
+                                return false;
+                            }
+                        }
+                    } else if (furniture.placement.type === 'range') {
+                        const coord1 = furniture.placement.coord1;
+                        const coord2 = furniture.placement.coord2;
+                        const minX = Math.min(coord1[0], coord2[0]);
+                        const maxX = Math.max(coord1[0], coord2[0]);
+                        const minY = Math.min(coord1[1], coord2[1]);
+                        const maxY = Math.max(coord1[1], coord2[1]);
+                        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                            // Check if furniture blocks movement (walls, stone do)
+                            if (furniture.name === 'wall' || furniture.name === 'stone') {
+                                return false;
+                            }
+                        }
+                    }
+                }
                 
                 // Check NPCs
                 for (let npc of this.state.npcs) {
@@ -2105,6 +2161,13 @@ class CodeGenerator:
                     return;
                 }
                 
+                // Track that user talked to this NPC
+                if (!this.state.user.talked_to_npcs.includes(npc.unique_name)) {
+                    this.state.user.talked_to_npcs.push(npc.unique_name);
+                    // Evaluate quests after talking to NPC (in case a quest requires talking to NPC)
+                    this.evaluateQuests();
+                }
+                
                 this.currentDialogNPC = npc;
                 panel.classList.add('show');
                 this.lastDialogOpenTime = Date.now();
@@ -2185,6 +2248,11 @@ class CodeGenerator:
                     this.sendToLLM(npc, message, conversationDiv);
                 } else {
                     conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> I'm having trouble thinking right now. Can we talk later?</p>`;
+                    // Mark that NPC has responded (even if LLM not configured)
+                    npc.has_responded = true;
+                    // Evaluate quests and check end game after NPC responds
+                    this.evaluateQuests();
+                    this.checkEndGame();
                 }
             }
             
@@ -2232,6 +2300,12 @@ class CodeGenerator:
                     
                     history.push({role: 'assistant', content: llmResponse});
                     conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${llmResponse}</p>`;
+                    
+                    // Mark that NPC has responded
+                    npc.has_responded = true;
+                    // Evaluate quests and check end game after NPC responds
+                    this.evaluateQuests();
+                    this.checkEndGame();
                 } catch (error) {
                     console.error('LLM request error:', error);
                     let errorMsg = "I'm having trouble thinking right now. Can we talk later?";
@@ -2246,6 +2320,12 @@ class CodeGenerator:
                     }
                     
                     conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em style="color: #ff6b6b;">${errorMsg}</em></p>`;
+                    
+                    // Mark that NPC has responded (even on error)
+                    npc.has_responded = true;
+                    // Evaluate quests and check end game after NPC responds
+                    this.evaluateQuests();
+                    this.checkEndGame();
                 }
             }
             
@@ -2312,6 +2392,8 @@ class CodeGenerator:
                         this.executeAction(quest.action);
                         quest.completed = true;
                         quest.status = 'completed';
+                        // Check end game after quest completion (in case quest and end_game share conditions)
+                        this.checkEndGame();
                     }
                 }
             }
@@ -2337,6 +2419,14 @@ class CodeGenerator:
                             return this.state.user.inventory.includes(condition.value);
                         }
                     }
+                } else if (condition.type === 'talked_to') {
+                    if (condition.entity === 'user') {
+                        return this.state.user.talked_to_npcs.includes(condition.value);
+                    }
+                } else if (condition.type === 'responded_to') {
+                    // Check if the NPC (condition.entity is the NPC name) has responded
+                    const npc = this.getEntity(condition.entity);
+                    return npc && npc.has_responded === true;
                 } else if (condition.type === 'comparison') {
                     const entity = this.getEntity(condition.entity);
                     if (!entity) return false;
@@ -2501,7 +2591,7 @@ class CodeGenerator:
                 } else {
                     questContent.innerHTML = this.state.quests.map(quest => 
                         `<div><strong>Quest ${quest.id}</strong>: ${quest.status}</div>`
-                    ).join('');
+                    ).join('<hr>');
                 }
             }
             
@@ -2532,14 +2622,38 @@ class CodeGenerator:
                 
                 // Draw furniture
                 for (let furniture of this.state.furniture) {
+                    let positions = [];
                     if (furniture.placement.type === 'coordinate') {
-                        const pos = furniture.placement.coord;
+                        positions = [furniture.placement.coord];
+                    } else if (furniture.placement.type === 'range') {
+                        const coord1 = furniture.placement.coord1;
+                        const coord2 = furniture.placement.coord2;
+                        const minX = Math.min(coord1[0], coord2[0]);
+                        const maxX = Math.max(coord1[0], coord2[0]);
+                        const minY = Math.min(coord1[1], coord2[1]);
+                        const maxY = Math.max(coord1[1], coord2[1]);
+                        for (let fx = minX; fx <= maxX; fx++) {
+                            for (let fy = minY; fy <= maxY; fy++) {
+                                positions.push([fx, fy]);
+                            }
+                        }
+                    }
+                    
+                    // Choose emoji based on furniture name
+                    let emoji = '🏠'; // default
+                    if (furniture.name === 'wall' || furniture.name === 'stone') {
+                        emoji = '🧱';
+                    } else if (furniture.name === 'grass') {
+                        emoji = '🟩';
+                    }
+                    
+                    for (let pos of positions) {
                         const screenX = centerX + (pos[0] - this.viewportX) * cellSize;
                         const screenY = centerY + (pos[1] - this.viewportY) * cellSize;
                         if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
                             screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
                             this.ctx.font = `${cellSize * 0.8}px Arial`;
-                            this.ctx.fillText('🏠', screenX, screenY + cellSize * 0.8);
+                            this.ctx.fillText(emoji, screenX, screenY + cellSize * 0.8);
                         }
                     }
                 }
