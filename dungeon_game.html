@@ -879,8 +879,14 @@
     "title": "Knowledge Quest!",
     "text_lines": [
       "You are on a quest to the entity at the center of the maze",
-      "Commands: arrow-keys for movement.  Space and Enter to fight.",
-      "2025 Langjam "
+      "Commands: [arrow-keys] for movement, [Space] and [Enter] to talk/fight",
+      "2025 Langjam"
+    ],
+    "links": [
+      [
+        "github",
+        "https://github.com/mtshomskyieee/langjam-gamejam-2025"
+      ]
     ]
   }
 };
@@ -1859,6 +1865,43 @@
                             p.textContent = text;
                             splashText.appendChild(p);
                         });
+                    }
+                    
+                    // Add links
+                    if (this.state.on_game_start.links && this.state.on_game_start.links.length > 0) {
+                        const linksDiv = document.createElement('div');
+                        linksDiv.style.marginTop = '20px';
+                        linksDiv.style.display = 'flex';
+                        linksDiv.style.flexWrap = 'wrap';
+                        linksDiv.style.gap = '15px';
+                        linksDiv.style.justifyContent = 'center';
+                        
+                        this.state.on_game_start.links.forEach(link => {
+                            const [anchorText, url] = link;
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.textContent = anchorText;
+                            a.target = '_blank';
+                            a.rel = 'noopener noreferrer';
+                            a.style.color = '#ffd700';
+                            a.style.textDecoration = 'none';
+                            a.style.padding = '8px 16px';
+                            a.style.border = '2px solid #ffd700';
+                            a.style.borderRadius = '5px';
+                            a.style.transition = 'all 0.3s';
+                            a.style.display = 'inline-block';
+                            a.onmouseenter = function() {
+                                this.style.background = '#ffd700';
+                                this.style.color = '#1e3c72';
+                            };
+                            a.onmouseleave = function() {
+                                this.style.background = 'transparent';
+                                this.style.color = '#ffd700';
+                            };
+                            linksDiv.appendChild(a);
+                        });
+                        
+                        splashText.appendChild(linksDiv);
                     }
                     
                     splashScreen.classList.add('show');

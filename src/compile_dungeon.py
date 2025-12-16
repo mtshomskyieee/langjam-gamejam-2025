@@ -553,6 +553,7 @@ class EndGameSection(ASTNode):
 class OnGameStartSection(ASTNode):
     title: Optional[str] = None
     text_lines: List[str] = field(default_factory=list)
+    links: List[Tuple[str, str]] = field(default_factory=list)  # List of (anchor_text, url) tuples
 
 
 @dataclass
@@ -1229,6 +1230,7 @@ class Parser:
         
         title = None
         text_lines = []
+        links = []
         
         while self.current_token().type != TokenType.EOF:
             if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_title':
@@ -1260,10 +1262,18 @@ class Parser:
                 self.expect(TokenType.COLON)
                 # Text must be a string
                 text_lines.append(self.expect(TokenType.STRING).value)
+            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_link':
+                self.advance()  # consume 'display_link'
+                self.expect(TokenType.COLON)
+                # display_link: "anchor", "url"
+                anchor_text = self.expect(TokenType.STRING).value
+                self.expect(TokenType.COMMA)
+                url = self.expect(TokenType.STRING).value
+                links.append((anchor_text, url))
             else:
                 break
         
-        return OnGameStartSection(title, text_lines)
+        return OnGameStartSection(title, text_lines, links)
 
 
 class Validator:
@@ -1892,7 +1902,8 @@ class CodeGenerator:
         if self.program.on_game_start_section:
             state['on_game_start'] = {
                 'title': self.program.on_game_start_section.title,
-                'text_lines': self.program.on_game_start_section.text_lines
+                'text_lines': self.program.on_game_start_section.text_lines,
+                'links': [list(link) for link in self.program.on_game_start_section.links]  # Convert tuples to lists for JSON
             }
         
         return f"const INITIAL_GAME_STATE = {json.dumps(state, indent=2)};"
@@ -2926,6 +2937,43 @@ class CodeGenerator:
                             p.textContent = text;
                             splashText.appendChild(p);
                         });
+                    }
+                    
+                    // Add links
+                    if (this.state.on_game_start.links && this.state.on_game_start.links.length > 0) {
+                        const linksDiv = document.createElement('div');
+                        linksDiv.style.marginTop = '20px';
+                        linksDiv.style.display = 'flex';
+                        linksDiv.style.flexWrap = 'wrap';
+                        linksDiv.style.gap = '15px';
+                        linksDiv.style.justifyContent = 'center';
+                        
+                        this.state.on_game_start.links.forEach(link => {
+                            const [anchorText, url] = link;
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.textContent = anchorText;
+                            a.target = '_blank';
+                            a.rel = 'noopener noreferrer';
+                            a.style.color = '#ffd700';
+                            a.style.textDecoration = 'none';
+                            a.style.padding = '8px 16px';
+                            a.style.border = '2px solid #ffd700';
+                            a.style.borderRadius = '5px';
+                            a.style.transition = 'all 0.3s';
+                            a.style.display = 'inline-block';
+                            a.onmouseenter = function() {
+                                this.style.background = '#ffd700';
+                                this.style.color = '#1e3c72';
+                            };
+                            a.onmouseleave = function() {
+                                this.style.background = 'transparent';
+                                this.style.color = '#ffd700';
+                            };
+                            linksDiv.appendChild(a);
+                        });
+                        
+                        splashText.appendChild(linksDiv);
                     }
                     
                     splashScreen.classList.add('show');

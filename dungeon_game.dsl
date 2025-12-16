@@ -62,6 +62,7 @@ end_game:
 on_game_start:
     display_title: "Knowledge Quest!"
     display_text: "You are on a quest to the entity at the center of the maze"
-    display_text: "Commands: arrow-keys for movement.  Space and Enter to fight."
-    display_text: "2025 Langjam "
+    display_text: "Commands: [arrow-keys] for movement, [Space] and [Enter] to talk/fight"
+    display_text: "2025 Langjam" 
+    display_link: "github", "https://github.com/mtshomskyieee/langjam-gamejam-2025"
 
