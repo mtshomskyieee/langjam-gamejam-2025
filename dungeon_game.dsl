@@ -44,10 +44,10 @@ init:
         monster-static: unique_name="goblin_guard_top", place at (10, 8), health 3, gives 25 experience
         monster-static: unique_name="goblin_guard_bottom", place at (10, 12), health 3, gives 25 experience
         # Goblins between outer and inner walls
-        monster-static: unique_name="goblin_patrol_1", place at (6, 6), health 2, gives 15 experience
-        monster-static: unique_name="goblin_patrol_2", place at (14, 6), health 2, gives 15 experience
-        monster-static: unique_name="goblin_patrol_3", place at (6, 14), health 2, gives 15 experience
-        monster-static: unique_name="goblin_patrol_4", place at (14, 14), health 2, gives 15 experience
+        monster-static: unique_name="goblin_patrol_1", place at (6, 6), health 2, gives 67 experience
+        monster-static: unique_name="goblin_patrol_2", place at (14, 6), health 2, gives 67 experience
+        monster-static: unique_name="goblin_patrol_3", place at (6, 14), health 2, gives 67 experience
+        monster-static: unique_name="goblin_patrol_4", place at (14, 14), health 2, gives 67 experience
     npc:
         npc-dynamic: unique_name="wizard" place at (10, 10) context "You are a wise wizard living in the center of a dungeon. You can answer questions about magic, the dungeon, or help guide adventurers. Be mysterious but helpful."
     user: unique_name="player", context "adventurer", at (1, 1)
@@ -59,4 +59,9 @@ quests:
 end_game:
     if wizard responded then win the game
     win_the_game: show "Congratulations! You gained the wizards knowledge!"
+on_game_start:
+    display_title: "Knowledge Quest!"
+    display_text: "You are on a quest to the entity at the center of the maze"
+    display_text: "Commands: arrow-keys for movement.  Space and Enter to fight."
+    display_text: "2025 Langjam "
 

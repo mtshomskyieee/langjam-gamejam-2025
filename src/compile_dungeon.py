@@ -40,6 +40,7 @@ class TokenType(Enum):
     RULES = "rules"
     QUESTS = "quests"
     END_GAME = "end_game"
+    ON_GAME_START = "on_game_start"
     WORLD = "world"
     FURNITURE = "furniture"
     MYTHICS = "mytics"
@@ -136,6 +137,7 @@ class Lexer:
             'rules': TokenType.RULES,
             'quests': TokenType.QUESTS,
             'end_game': TokenType.END_GAME,
+            'on_game_start': TokenType.ON_GAME_START,
             'world': TokenType.WORLD,
             'furniture': TokenType.FURNITURE,
             'mytics': TokenType.MYTHICS,
@@ -400,6 +402,7 @@ class Program(ASTNode):
     rules_section: Optional['RulesSection'] = None
     quests_section: Optional['QuestsSection'] = None
     end_game_section: Optional['EndGameSection'] = None
+    on_game_start_section: Optional['OnGameStartSection'] = None
 
 
 @dataclass
@@ -547,6 +550,12 @@ class EndGameSection(ASTNode):
 
 
 @dataclass
+class OnGameStartSection(ASTNode):
+    title: Optional[str] = None
+    text_lines: List[str] = field(default_factory=list)
+
+
+@dataclass
 class EndCondition(ASTNode):
     condition: Condition
     result: Optional[str] = None  # 'win the game' or 'die and lose the game'
@@ -595,6 +604,8 @@ class Parser:
                 program.quests_section = self.parse_quests_section()
             elif self.current_token().type == TokenType.END_GAME:
                 program.end_game_section = self.parse_end_game_section()
+            elif self.current_token().type == TokenType.ON_GAME_START:
+                program.on_game_start_section = self.parse_on_game_start_section()
             else:
                 raise SyntaxError(f"Unexpected token {self.current_token().type} at line {self.current_token().line}")
         
@@ -1211,6 +1222,48 @@ class Parser:
                 break
         
         return EndGameSection(conditions, win_message, lose_message)
+    
+    def parse_on_game_start_section(self) -> OnGameStartSection:
+        self.expect(TokenType.ON_GAME_START)
+        self.expect(TokenType.COLON)
+        
+        title = None
+        text_lines = []
+        
+        while self.current_token().type != TokenType.EOF:
+            if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_title':
+                self.advance()  # consume 'display_title'
+                self.expect(TokenType.COLON)
+                # Title can be a string or unquoted text (collect tokens until next command or EOF)
+                if self.current_token().type == TokenType.STRING:
+                    title = self.expect(TokenType.STRING).value
+                else:
+                    # Collect tokens until we hit the next display_ command or end of section
+                    title_parts = []
+                    while (self.current_token().type != TokenType.EOF and 
+                           not (self.current_token().type == TokenType.IDENTIFIER and 
+                                self.current_token().value.startswith('display_'))):
+                        token = self.current_token()
+                        if token.type == TokenType.IDENTIFIER or token.type == TokenType.STRING:
+                            title_parts.append(token.value)
+                        elif token.type in [TokenType.NUMBER, TokenType.BOOLEAN]:
+                            title_parts.append(str(token.value))
+                        else:
+                            # Include punctuation and other characters as-is
+                            title_parts.append(str(token.value) if token.value else '')
+                        self.advance()
+                    title = ' '.join(title_parts).strip()
+                    if not title:
+                        title = None
+            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_text':
+                self.advance()  # consume 'display_text'
+                self.expect(TokenType.COLON)
+                # Text must be a string
+                text_lines.append(self.expect(TokenType.STRING).value)
+            else:
+                break
+        
+        return OnGameStartSection(title, text_lines)
 
 
 class Validator:
@@ -1521,6 +1574,76 @@ class CodeGenerator:
             70% { opacity: 1; }
             100% { opacity: 0; }
         }
+        
+        #splash-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #splash-screen.show {
+            display: flex;
+        }
+        
+        #splash-content {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #splash-title {
+            font-size: 2.5em;
+            margin: 0 0 20px 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            color: #ffd700;
+        }
+        
+        #splash-text {
+            font-size: 1.2em;
+            line-height: 1.8;
+            margin: 20px 0;
+            color: #ffffff;
+        }
+        
+        #splash-text p {
+            margin: 10px 0;
+        }
+        
+        #splash-close {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 1.2em;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        #splash-close:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
+        }
+        
+        #splash-close:active {
+            transform: translateY(0);
+        }
         """
     
     def generate_html(self) -> str:
@@ -1563,6 +1686,13 @@ class CodeGenerator:
         <button id="dialog-close" onclick="game.closeDialog()">× Close</button>
         <div id="dialog-content"></div>
         <input type="text" id="dialog-input" placeholder="Type message..." style="display:none" onkeypress="handleDialogInput(event)">
+    </div>
+    <div id="splash-screen">
+        <div id="splash-content">
+            <h1 id="splash-title"></h1>
+            <div id="splash-text"></div>
+            <button id="splash-close" onclick="game.closeSplashScreen()">Start Game</button>
+        </div>
     </div>
     <script>
         function toggleDropdown(id) {
@@ -1634,7 +1764,8 @@ class CodeGenerator:
             'variables': {},
             'quests': [],
             'rules': [],
-            'end_game': {}
+            'end_game': {},
+            'on_game_start': {}
         }
         
         # Add furniture
@@ -1757,6 +1888,13 @@ class CodeGenerator:
                 'lose_message': self.program.end_game_section.lose_message
             }
         
+        # Add on game start (splash screen)
+        if self.program.on_game_start_section:
+            state['on_game_start'] = {
+                'title': self.program.on_game_start_section.title,
+                'text_lines': self.program.on_game_start_section.text_lines
+            }
+        
         return f"const INITIAL_GAME_STATE = {json.dumps(state, indent=2)};"
     
     def placement_to_dict(self, placement: Placement) -> dict:
@@ -1842,6 +1980,7 @@ class CodeGenerator:
                 this.resizeCanvas();
                 this.placeRandomEntities();
                 this.updateUI();
+                this.showSplashScreen();
             }
             
             resizeCanvas() {
@@ -2763,6 +2902,41 @@ class CodeGenerator:
                     }
                 };
                 reader.readAsText(file);
+            }
+            
+            showSplashScreen() {
+                if (!this.state.on_game_start || !this.state.on_game_start.title) {
+                    return; // No splash screen configured
+                }
+                
+                const splashScreen = document.getElementById('splash-screen');
+                const splashTitle = document.getElementById('splash-title');
+                const splashText = document.getElementById('splash-text');
+                
+                if (splashScreen && splashTitle && splashText) {
+                    splashTitle.textContent = this.state.on_game_start.title;
+                    
+                    // Clear existing text
+                    splashText.innerHTML = '';
+                    
+                    // Add each text line as a paragraph
+                    if (this.state.on_game_start.text_lines && this.state.on_game_start.text_lines.length > 0) {
+                        this.state.on_game_start.text_lines.forEach(text => {
+                            const p = document.createElement('p');
+                            p.textContent = text;
+                            splashText.appendChild(p);
+                        });
+                    }
+                    
+                    splashScreen.classList.add('show');
+                }
+            }
+            
+            closeSplashScreen() {
+                const splashScreen = document.getElementById('splash-screen');
+                if (splashScreen) {
+                    splashScreen.classList.remove('show');
+                }
             }
         }
         

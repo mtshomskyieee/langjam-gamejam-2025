@@ -162,6 +162,76 @@
             100% { opacity: 0; }
         }
         
+        #splash-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #splash-screen.show {
+            display: flex;
+        }
+        
+        #splash-content {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #splash-title {
+            font-size: 2.5em;
+            margin: 0 0 20px 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            color: #ffd700;
+        }
+        
+        #splash-text {
+            font-size: 1.2em;
+            line-height: 1.8;
+            margin: 20px 0;
+            color: #ffffff;
+        }
+        
+        #splash-text p {
+            margin: 10px 0;
+        }
+        
+        #splash-close {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 1.2em;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        #splash-close:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
+        }
+        
+        #splash-close:active {
+            transform: translateY(0);
+        }
+        
     </style>
 </head>
 <body>
@@ -204,6 +274,13 @@
         <button id="dialog-close" onclick="game.closeDialog()">× Close</button>
         <div id="dialog-content"></div>
         <input type="text" id="dialog-input" placeholder="Type message..." style="display:none" onkeypress="handleDialogInput(event)">
+    </div>
+    <div id="splash-screen">
+        <div id="splash-content">
+            <h1 id="splash-title"></h1>
+            <div id="splash-text"></div>
+            <button id="splash-close" onclick="game.closeSplashScreen()">Start Game</button>
+        </div>
     </div>
     <script>
         function toggleDropdown(id) {
@@ -645,7 +722,7 @@
       "unique_name": "goblin_patrol_1",
       "health": 2,
       "max_health": 2,
-      "experience": 15,
+      "experience": 67,
       "defeated": false,
       "position": [
         6,
@@ -656,7 +733,7 @@
       "unique_name": "goblin_patrol_2",
       "health": 2,
       "max_health": 2,
-      "experience": 15,
+      "experience": 67,
       "defeated": false,
       "position": [
         14,
@@ -667,7 +744,7 @@
       "unique_name": "goblin_patrol_3",
       "health": 2,
       "max_health": 2,
-      "experience": 15,
+      "experience": 67,
       "defeated": false,
       "position": [
         6,
@@ -678,7 +755,7 @@
       "unique_name": "goblin_patrol_4",
       "health": 2,
       "max_health": 2,
-      "experience": 15,
+      "experience": 67,
       "defeated": false,
       "position": [
         14,
@@ -797,6 +874,14 @@
     ],
     "win_message": "Congratulations! You gained the wizards knowledge!",
     "lose_message": null
+  },
+  "on_game_start": {
+    "title": "Knowledge Quest!",
+    "text_lines": [
+      "You are on a quest to the entity at the center of the maze",
+      "Commands: arrow-keys for movement.  Space and Enter to fight.",
+      "2025 Langjam "
+    ]
   }
 };
 
@@ -828,6 +913,7 @@
                 this.resizeCanvas();
                 this.placeRandomEntities();
                 this.updateUI();
+                this.showSplashScreen();
             }
             
             resizeCanvas() {
@@ -1749,6 +1835,41 @@
                     }
                 };
                 reader.readAsText(file);
+            }
+            
+            showSplashScreen() {
+                if (!this.state.on_game_start || !this.state.on_game_start.title) {
+                    return; // No splash screen configured
+                }
+                
+                const splashScreen = document.getElementById('splash-screen');
+                const splashTitle = document.getElementById('splash-title');
+                const splashText = document.getElementById('splash-text');
+                
+                if (splashScreen && splashTitle && splashText) {
+                    splashTitle.textContent = this.state.on_game_start.title;
+                    
+                    // Clear existing text
+                    splashText.innerHTML = '';
+                    
+                    // Add each text line as a paragraph
+                    if (this.state.on_game_start.text_lines && this.state.on_game_start.text_lines.length > 0) {
+                        this.state.on_game_start.text_lines.forEach(text => {
+                            const p = document.createElement('p');
+                            p.textContent = text;
+                            splashText.appendChild(p);
+                        });
+                    }
+                    
+                    splashScreen.classList.add('show');
+                }
+            }
+            
+            closeSplashScreen() {
+                const splashScreen = document.getElementById('splash-screen');
+                if (splashScreen) {
+                    splashScreen.classList.remove('show');
+                }
             }
         }
         
