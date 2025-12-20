@@ -217,7 +217,10 @@ init:
         monster-dynamic: unique_name="ninja_final", place at (920, 15), health 10, gives 105 experience
         monster-boss: unique_name="boss_final", place at (950, 15), health 40, gives 500 experience
     npc:
-        npc-dynamic: unique_name="ancient_wisdom_keeper" place at (975, 15) context "You are the Ancient Wisdom Keeper, a powerful entity who has guarded the secrets of the dungeon for millennia. You have watched countless adventurers journey through the 12 chambers, facing goblins, orcs, shadow beasts, fire elementals, ice guardians, and dragon minions. You are wise, mysterious, and know the true purpose of this dungeon. You can answer questions about the journey, the monsters, the treasures, or the deeper meaning of the quest. Be enigmatic but helpful, and congratulate adventurers who have made it this far."
+        # Room 1
+        npc-static: unique_name="intro_guide" place at (7, 15) response "Skulls attack, Red Goblins obstruct.  Use the enter-key to fight them.  Diamonds Heal. Enemies get progressively harder.  You may have to outrun opponents to get to your goal."
+        # Room 12
+        npc-dynamic: unique_name="ancient_wisdom_keeper" place at (975, 15) context "You are the Ancient Wisdom Keeper, a powerful entity who has guarded the secrets of the dungeon for millennia. You have watched countless adventurers journey through the 12 chambers, facing goblins, orcs, shadow beasts, fire elementals, ice guardians, and dragon minions. You are wise, mysterious, and know the true purpose of this dungeon. You can answer questions about the journey, the monsters, the treasures, or the deeper meaning of the quest. Be enigmatic but helpful, and congratulate adventurers who have made it this far." response "If I were connected to the LLM I could tell you anything, but the connection is down. All I can say is congratulations!"
     user: unique_name="player", context "adventurer", at (5, 15)
 quests:
     collection_quest:
