@@ -1,1438 +1,11 @@
-#!/usr/bin/env python3
-"""
-Compiler for Dungeon Game DSL
-Compiles a custom DSL into a playable HTML/JavaScript game.
-
-MIT License
-
-Copyright (c) 2025 Michael Shomsky
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
-
-import re
-import sys
-import json
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, field
-from enum import Enum
-
-
-class TokenType(Enum):
-    # Keywords
-    INIT = "init"
-    RULES = "rules"
-    QUESTS = "quests"
-    END_GAME = "end_game"
-    ON_GAME_START = "on_game_start"
-    WORLD = "world"
-    FURNITURE = "furniture"
-    MYTHICS = "mytics"
-    ITEMS = "items"
-    MONSTERS = "monsters"
-    USER = "user"
-    NPC = "NPC"
-    LET = "let"
-    CATCH = "catch"
-    IF = "if"
-    THEN = "then"
-    AND = "and"
-    AT = "at"
-    IS = "is"
-    HAS = "has"
-    SHOW = "show"
-    WIN = "win"
-    LOSE = "lose"
-    DIE = "die"
-    LEVEL_UP = "level up"
-    MOVE = "move"
-    TALK = "talk"
-    ATTACK = "attack"
-    USE = "use"
-    SET = "set"
-    TOUCH = "touch"
-    PLACE = "place"
-    CHECK_INVENTORY = "check_inventory"
-    TOWARDS = "towards"
-    WITH = "with"
-    CAN = "can"
-    BE = "be"
-    PICKED = "picked"
-    UP = "up"
-    BY = "by"
-    THE = "the"
-    GIVES = "gives"
-    EXPERIENCE = "experience"
-    HEALTH = "health"
-    DAMAGE = "damage"
-    KILLABLE = "killable"
-    HIT = "hit"
-    RANDOM = "random"
-    ALL = "all"
-    TO = "to"
-    OF = "of"
-    
-    # Types
-    IDENTIFIER = "identifier"
-    STRING = "string"
-    NUMBER = "number"
-    BOOLEAN = "boolean"
-    PERCENTAGE = "percentage"
-    
-    # Operators
-    EQUALS = "="
-    COMMA = ","
-    COLON = ":"
-    SEMICOLON = ";"
-    LPAREN = "("
-    RPAREN = ")"
-    GT = ">"
-    LT = "<"
-    GTE = ">="
-    LTE = "<="
-    EQ = "=="
-    NE = "!="
-    
-    # Special
-    NEWLINE = "newline"
-    COMMENT = "comment"
-    EOF = "eof"
-
-
-@dataclass
-class Token:
-    type: TokenType
-    value: Any
-    line: int
-    column: int
-
-
-class Lexer:
-    def __init__(self, text: str):
-        self.text = text
-        self.pos = 0
-        self.line = 1
-        self.column = 1
-        self.tokens: List[Token] = []
-        
-        # Keywords mapping
-        self.keywords = {
-            'init': TokenType.INIT,
-            'rules': TokenType.RULES,
-            'quests': TokenType.QUESTS,
-            'end_game': TokenType.END_GAME,
-            'on_game_start': TokenType.ON_GAME_START,
-            'world': TokenType.WORLD,
-            'furniture': TokenType.FURNITURE,
-            'mytics': TokenType.MYTHICS,
-            'items': TokenType.ITEMS,
-            'monsters': TokenType.MONSTERS,
-            'user': TokenType.USER,
-            'npc': TokenType.NPC,
-            'let': TokenType.LET,
-            'catch': TokenType.CATCH,
-            'if': TokenType.IF,
-            'then': TokenType.THEN,
-            'and': TokenType.AND,
-            'at': TokenType.AT,
-            'is': TokenType.IS,
-            'has': TokenType.HAS,
-            'show': TokenType.SHOW,
-            'win': TokenType.WIN,
-            'lose': TokenType.LOSE,
-            'die': TokenType.DIE,
-            'level': TokenType.LEVEL_UP,
-            'move': TokenType.MOVE,
-            'talk': TokenType.TALK,
-            'attack': TokenType.ATTACK,
-            'use': TokenType.USE,
-            'set': TokenType.SET,
-            'touch': TokenType.TOUCH,
-            'place': TokenType.PLACE,
-            'check_inventory': TokenType.CHECK_INVENTORY,
-            'towards': TokenType.TOWARDS,
-            'with': TokenType.WITH,
-            'can': TokenType.CAN,
-            'be': TokenType.BE,
-            'picked': TokenType.PICKED,
-            'up': TokenType.UP,
-            'by': TokenType.BY,
-            'the': TokenType.THE,
-            'gives': TokenType.GIVES,
-            'experience': TokenType.EXPERIENCE,
-            'health': TokenType.HEALTH,
-            'damage': TokenType.DAMAGE,
-            'killable': TokenType.KILLABLE,
-            'hit': TokenType.HIT,
-            'random': TokenType.RANDOM,
-            'all': TokenType.ALL,
-            'to': TokenType.TO,
-            'of': TokenType.OF,
-            'true': TokenType.BOOLEAN,
-            'false': TokenType.BOOLEAN,
-        }
-    
-    def current_char(self) -> Optional[str]:
-        if self.pos >= len(self.text):
-            return None
-        return self.text[self.pos]
-    
-    def peek_char(self, offset: int = 1) -> Optional[str]:
-        pos = self.pos + offset
-        if pos >= len(self.text):
-            return None
-        return self.text[pos]
-    
-    def advance(self):
-        if self.current_char() == '\n':
-            self.line += 1
-            self.column = 1
-        else:
-            self.column += 1
-        self.pos += 1
-    
-    def skip_whitespace(self):
-        while self.current_char() and self.current_char() in ' \t\r':
-            self.advance()
-    
-    def read_string(self) -> str:
-        quote = self.current_char()
-        self.advance()  # Skip opening quote
-        value = ""
-        while self.current_char() and self.current_char() != quote:
-            if self.current_char() == '\\':
-                self.advance()
-                if self.current_char() == 'n':
-                    value += '\n'
-                elif self.current_char() == 't':
-                    value += '\t'
-                elif self.current_char() == '\\':
-                    value += '\\'
-                elif self.current_char() == '"':
-                    value += '"'
-                else:
-                    value += self.current_char()
-                self.advance()
-            else:
-                value += self.current_char()
-                self.advance()
-        if self.current_char() == quote:
-            self.advance()  # Skip closing quote
-        return value
-    
-    def read_number(self) -> Tuple[float, bool]:
-        """Returns (value, is_float)"""
-        num_str = ""
-        is_float = False
-        while self.current_char() and (self.current_char().isdigit() or self.current_char() == '.'):
-            if self.current_char() == '.':
-                if is_float:
-                    break
-                is_float = True
-            num_str += self.current_char()
-            self.advance()
-        return (float(num_str) if is_float else int(num_str), is_float)
-    
-    def read_identifier(self) -> str:
-        ident = ""
-        while self.current_char() and (self.current_char().isalnum() or self.current_char() in '_-'):
-            ident += self.current_char()
-            self.advance()
-        return ident
-    
-    def read_comment(self):
-        while self.current_char() and self.current_char() != '\n':
-            self.advance()
-    
-    def tokenize(self) -> List[Token]:
-        while self.pos < len(self.text):
-            self.skip_whitespace()
-            
-            if not self.current_char():
-                break
-            
-            char = self.current_char()
-            line = self.line
-            col = self.column
-            
-            # Comments
-            if char == '#':
-                self.read_comment()
-                continue
-            
-            # Newline
-            if char == '\n':
-                self.advance()
-                continue
-            
-            # Strings
-            if char in '"\'':
-                value = self.read_string()
-                self.tokens.append(Token(TokenType.STRING, value, line, col))
-                continue
-            
-            # Numbers
-            if char.isdigit():
-                value, _ = self.read_number()
-                # Check for percentage
-                if self.current_char() == '%':
-                    self.advance()
-                    self.tokens.append(Token(TokenType.PERCENTAGE, value, line, col))
-                else:
-                    self.tokens.append(Token(TokenType.NUMBER, value, line, col))
-                continue
-            
-            # Operators
-            if char == '=':
-                if self.peek_char() == '=':
-                    self.advance()
-                    self.advance()
-                    self.tokens.append(Token(TokenType.EQ, "==", line, col))
-                else:
-                    self.advance()
-                    self.tokens.append(Token(TokenType.EQUALS, "=", line, col))
-                continue
-            
-            if char == '>':
-                if self.peek_char() == '=':
-                    self.advance()
-                    self.advance()
-                    self.tokens.append(Token(TokenType.GTE, ">=", line, col))
-                else:
-                    self.advance()
-                    self.tokens.append(Token(TokenType.GT, ">", line, col))
-                continue
-            
-            if char == '<':
-                if self.peek_char() == '=':
-                    self.advance()
-                    self.advance()
-                    self.tokens.append(Token(TokenType.LTE, "<=", line, col))
-                else:
-                    self.advance()
-                    self.tokens.append(Token(TokenType.LT, "<", line, col))
-                continue
-            
-            if char == '!':
-                if self.peek_char() == '=':
-                    self.advance()
-                    self.advance()
-                    self.tokens.append(Token(TokenType.NE, "!=", line, col))
-                else:
-                    raise SyntaxError(f"Unexpected character '!' at line {line}, column {col}")
-                continue
-            
-            if char == ',':
-                self.advance()
-                self.tokens.append(Token(TokenType.COMMA, ",", line, col))
-                continue
-            
-            if char == ':':
-                self.advance()
-                self.tokens.append(Token(TokenType.COLON, ":", line, col))
-                continue
-            
-            if char == ';':
-                self.advance()
-                self.tokens.append(Token(TokenType.SEMICOLON, ";", line, col))
-                continue
-            
-            if char == '(':
-                self.advance()
-                self.tokens.append(Token(TokenType.LPAREN, "(", line, col))
-                continue
-            
-            if char == ')':
-                self.advance()
-                self.tokens.append(Token(TokenType.RPAREN, ")", line, col))
-                continue
-            
-            # Identifiers and keywords
-            if char.isalpha() or char == '_':
-                ident = self.read_identifier()
-                # Check for multi-word keywords
-                if ident == 'level' and self.current_char() == ' ':
-                    next_pos = self.pos
-                    while self.text[next_pos:next_pos+3] == ' up':
-                        ident += ' up'
-                        self.pos = next_pos + 3
-                        break
-                
-                token_type = self.keywords.get(ident.lower(), TokenType.IDENTIFIER)
-                if token_type == TokenType.BOOLEAN:
-                    value = ident.lower() == 'true'
-                    self.tokens.append(Token(TokenType.BOOLEAN, value, line, col))
-                else:
-                    self.tokens.append(Token(token_type, ident, line, col))
-                continue
-            
-            # Unknown character
-            raise SyntaxError(f"Unexpected character '{char}' at line {line}, column {col}")
-        
-        self.tokens.append(Token(TokenType.EOF, None, self.line, self.column))
-        return self.tokens
-
-
-# AST Nodes
-@dataclass
-class ASTNode:
-    pass
-
-
-@dataclass
-class Program(ASTNode):
-    variables: List['VariableDecl'] = field(default_factory=list)
-    init_section: Optional['InitSection'] = None
-    rules_section: Optional['RulesSection'] = None
-    quests_section: Optional['QuestsSection'] = None
-    end_game_section: Optional['EndGameSection'] = None
-    on_game_start_section: Optional['OnGameStartSection'] = None
-
-
-@dataclass
-class VariableDecl(ASTNode):
-    name: str
-    value: Any
-
-
-@dataclass
-class InitSection(ASTNode):
-    world: Optional['WorldDecl'] = None
-    furniture: List['FurnitureItem'] = field(default_factory=list)
-    mythics: List['MythicItem'] = field(default_factory=list)
-    items: List['ItemDecl'] = field(default_factory=list)
-    monsters: List['MonsterDecl'] = field(default_factory=list)
-    user: Optional['UserDecl'] = None
-    npcs: List['NPCDecl'] = field(default_factory=list)
-    llm_endpoint: Optional[str] = None
-    llm_token: Optional[str] = None
-
-
-@dataclass
-class WorldDecl(ASTNode):
-    width: int = 100
-    height: int = 100
-
-
-@dataclass
-class FurnitureItem(ASTNode):
-    name: str
-    placement: 'Placement'
-
-
-@dataclass
-class Placement(ASTNode):
-    type: str  # 'all', 'coordinate', 'range', 'random'
-    coord1: Optional[Tuple[int, int]] = None
-    coord2: Optional[Tuple[int, int]] = None
-    percentage: Optional[float] = None  # For random placement
-
-
-@dataclass
-class MythicItem(ASTNode):
-    unique_name: str
-    placement: Optional[Placement] = None
-    can_pickup: bool = False
-    catch_message: Optional[str] = None
-
-
-@dataclass
-class ItemDecl(ASTNode):
-    item_type: str
-    unique_name: str
-    placement: Optional[Placement] = None
-    can_pickup: bool = False
-    effect: Optional[str] = None
-    damage: Optional[int] = None
-    catch_message: Optional[str] = None
-
-
-@dataclass
-class MonsterDecl(ASTNode):
-    unique_name: str
-    monster_type: str = 'monster-static'  # 'monster-static', 'monster-dynamic', or 'monster-boss'
-    placement: Optional[Placement] = None
-    health: Optional[int] = None
-    killable_hits: Optional[int] = None  # Legacy support
-    experience: Optional[int] = None
-
-
-@dataclass
-class UserDecl(ASTNode):
-    unique_name: str
-    context: Optional[str] = None
-    position: Optional[Tuple[int, int]] = None
-
-
-@dataclass
-class NPCDecl(ASTNode):
-    npc_type: str  # 'npc-static', 'npc-dynamic', 'npc-state-machine'
-    unique_name: str
-    placement: Optional[Placement] = None
-    context: Optional[str] = None
-    response: Optional[str] = None
-    state_machine: Optional[str] = None
-    emoji: Optional[str] = None
-    agenda: Optional[str] = None
-    conditions: List['NPCCondition'] = field(default_factory=list)
-    catch_message: Optional[str] = None
-
-
-@dataclass
-class NPCCondition(ASTNode):
-    condition_type: str  # 'item', 'experience', 'health'
-    then_action: str  # 'response' or 'context'
-    operator: Optional[str] = None
-    value: Any = None
-    action_value: str = None
-
-
-@dataclass
-class RulesSection(ASTNode):
-    rules: List['Rule'] = field(default_factory=list)
-
-
-@dataclass
-class Rule(ASTNode):
-    conditions: List['Condition'] = field(default_factory=list)
-    action: 'Action' = None
-
-
-@dataclass
-class Condition(ASTNode):
-    type: str  # 'position', 'has', 'comparison', 'talked_to', 'responded_to'
-    entity: str
-    operator: Optional[str] = None
-    value: Any = None
-    position: Optional[Tuple[int, int]] = None
-
-
-@dataclass
-class Action(ASTNode):
-    type: str  # 'talk-dynamic', 'talk-static', 'talk-state-machine', 'level up', 'command'
-    command: Optional[str] = None
-    target: Optional[str] = None
-    value: Optional[Any] = None
-
-
-@dataclass
-class QuestsSection(ASTNode):
-    quests: List['Quest'] = field(default_factory=list)
-
-
-@dataclass
-class Quest(ASTNode):
-    name: Optional[str] = None
-    conditions: List[Condition] = field(default_factory=list)
-    action: Action = None
-
-
-@dataclass
-class EndGameSection(ASTNode):
-    conditions: List['EndCondition'] = field(default_factory=list)
-    win_message: Optional[str] = None
-    lose_message: Optional[str] = None
-
-
-@dataclass
-class OnGameStartSection(ASTNode):
-    title: Optional[str] = None
-    text_lines: List[str] = field(default_factory=list)
-    links: List[Tuple[str, str]] = field(default_factory=list)  # List of (anchor_text, url) tuples
-
-
-@dataclass
-class EndCondition(ASTNode):
-    condition: Condition
-    result: Optional[str] = None  # 'win the game' or 'die and lose the game'
-
-
-class Parser:
-    def __init__(self, tokens: List[Token]):
-        self.tokens = tokens
-        self.pos = 0
-    
-    def current_token(self) -> Token:
-        if self.pos >= len(self.tokens):
-            return self.tokens[-1]  # EOF
-        return self.tokens[self.pos]
-    
-    def peek_token(self, offset: int = 1) -> Token:
-        pos = self.pos + offset
-        if pos >= len(self.tokens):
-            return self.tokens[-1]  # EOF
-        return self.tokens[pos]
-    
-    def advance(self):
-        if self.pos < len(self.tokens):
-            self.pos += 1
-    
-    def expect(self, token_type: TokenType, value: Any = None):
-        token = self.current_token()
-        if token.type != token_type:
-            raise SyntaxError(f"Expected {token_type}, got {token.type} at line {token.line}, column {token.column}")
-        if value is not None and token.value != value:
-            raise SyntaxError(f"Expected {value}, got {token.value} at line {token.line}, column {token.column}")
-        self.advance()
-        return token
-    
-    def parse(self) -> Program:
-        program = Program()
-        
-        while self.current_token().type != TokenType.EOF:
-            if self.current_token().type == TokenType.LET:
-                program.variables.append(self.parse_variable())
-            elif self.current_token().type == TokenType.INIT:
-                program.init_section = self.parse_init_section()
-            elif self.current_token().type == TokenType.RULES:
-                program.rules_section = self.parse_rules_section()
-            elif self.current_token().type == TokenType.QUESTS:
-                program.quests_section = self.parse_quests_section()
-            elif self.current_token().type == TokenType.END_GAME:
-                program.end_game_section = self.parse_end_game_section()
-            elif self.current_token().type == TokenType.ON_GAME_START:
-                program.on_game_start_section = self.parse_on_game_start_section()
-            else:
-                raise SyntaxError(f"Unexpected token {self.current_token().type} at line {self.current_token().line}")
-        
-        return program
-    
-    def parse_variable(self) -> VariableDecl:
-        self.expect(TokenType.LET)
-        name = self.expect(TokenType.IDENTIFIER).value
-        self.expect(TokenType.EQUALS)
-        value = self.parse_value()
-        return VariableDecl(name, value)
-    
-    def parse_value(self) -> Any:
-        token = self.current_token()
-        if token.type == TokenType.NUMBER:
-            self.advance()
-            return token.value
-        elif token.type == TokenType.STRING:
-            self.advance()
-            return token.value
-        elif token.type == TokenType.BOOLEAN:
-            self.advance()
-            return token.value
-        elif token.type == TokenType.IDENTIFIER:
-            self.advance()
-            return token.value
-        else:
-            raise SyntaxError(f"Unexpected value type {token.type} at line {token.line}")
-    
-    def parse_init_section(self) -> InitSection:
-        self.expect(TokenType.INIT)
-        self.expect(TokenType.COLON)
-        
-        init = InitSection()
-        
-        while self.current_token().type != TokenType.EOF:
-            if self.current_token().type == TokenType.WORLD:
-                init.world = self.parse_world()
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'llm':
-                self.parse_llm_config(init)
-            elif self.current_token().type == TokenType.FURNITURE:
-                init.furniture.extend(self.parse_furniture())
-            elif self.current_token().type == TokenType.MYTHICS:
-                init.mythics.extend(self.parse_mythics())
-            elif self.current_token().type == TokenType.ITEMS:
-                init.items.extend(self.parse_items())
-            elif self.current_token().type == TokenType.MONSTERS:
-                init.monsters.extend(self.parse_monsters())
-            elif self.current_token().type == TokenType.USER:
-                init.user = self.parse_user()
-            elif self.current_token().type == TokenType.NPC:
-                init.npcs.extend(self.parse_npcs())
-            else:
-                break
-        
-        return init
-    
-    def parse_world(self) -> WorldDecl:
-        self.expect(TokenType.WORLD)
-        self.expect(TokenType.COLON)
-        
-        if self.current_token().type == TokenType.NUMBER:
-            width = int(self.expect(TokenType.NUMBER).value)
-            self.expect(TokenType.IDENTIFIER)  # 'x'
-            height = int(self.expect(TokenType.NUMBER).value)
-            self.expect(TokenType.IDENTIFIER)  # 'grid'
-            return WorldDecl(width, height)
-        else:
-            self.expect(TokenType.IDENTIFIER)  # 'grid'
-            return WorldDecl(100, 100)  # Default
-    
-    def parse_furniture(self) -> List[FurnitureItem]:
-        self.expect(TokenType.FURNITURE)
-        self.expect(TokenType.COLON)
-        
-        furniture = []
-        while self.current_token().type == TokenType.IDENTIFIER:
-            # Check if next token is AT - if not, we've hit a new section
-            if self.peek_token().type != TokenType.AT:
-                break
-            name = self.expect(TokenType.IDENTIFIER).value
-            self.expect(TokenType.AT)
-            placement = self.parse_placement()
-            furniture.append(FurnitureItem(name, placement))
-        
-        return furniture
-    
-    def parse_placement(self) -> Placement:
-        if self.current_token().type == TokenType.ALL:
-            self.advance()
-            return Placement('all')
-        elif self.current_token().type == TokenType.RANDOM:
-            self.advance()
-            self.expect(TokenType.LPAREN)
-            percentage = self.expect(TokenType.PERCENTAGE).value
-            self.expect(TokenType.RPAREN)
-            return Placement('random', None, None, percentage)
-        elif self.current_token().type == TokenType.LPAREN:
-            coord1 = self.parse_coordinate()
-            if self.current_token().type == TokenType.TO:
-                self.advance()
-                coord2 = self.parse_coordinate()
-                return Placement('range', coord1, coord2)
-            else:
-                return Placement('coordinate', coord1)
-        else:
-            raise SyntaxError(f"Unexpected placement at line {self.current_token().line}")
-    
-    def parse_coordinate(self) -> Tuple[int, int]:
-        self.expect(TokenType.LPAREN)
-        x = int(self.expect(TokenType.NUMBER).value)
-        self.expect(TokenType.COMMA)
-        y = int(self.expect(TokenType.NUMBER).value)
-        self.expect(TokenType.RPAREN)
-        return (x, y)
-    
-    def parse_mythics(self) -> List[MythicItem]:
-        self.expect(TokenType.MYTHICS)
-        self.expect(TokenType.COLON)
-        
-        mythics = []
-        while self.current_token().type == TokenType.IDENTIFIER:
-            # mythic-static:
-            self.expect(TokenType.IDENTIFIER)  # 'mythic-static'
-            self.expect(TokenType.COLON)
-            
-            unique_name = None
-            placement = None
-            can_pickup = False
-            catch_message = None
-            
-            # Parse properties
-            while self.current_token().type in [TokenType.IDENTIFIER, TokenType.STRING, TokenType.AT, TokenType.CAN, TokenType.CATCH, TokenType.COMMA, TokenType.PLACE]:
-                # Skip commas
-                if self.current_token().type == TokenType.COMMA:
-                    self.advance()
-                    continue
-                    
-                if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'unique_name':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    unique_name = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.PLACE:
-                    self.advance()
-                    self.expect(TokenType.AT)
-                    placement = self.parse_placement()
-                elif self.current_token().type == TokenType.CAN:
-                    # "can be picked up by the user"
-                    self.advance()
-                    self.expect(TokenType.BE)
-                    self.expect(TokenType.PICKED)
-                    self.expect(TokenType.UP)
-                    self.expect(TokenType.BY)
-                    self.expect(TokenType.THE)
-                    # Accept either USER token or IDENTIFIER for 'user'
-                    if self.current_token().type == TokenType.USER:
-                        self.advance()
-                    else:
-                        self.expect(TokenType.IDENTIFIER)  # 'user'
-                    can_pickup = True
-                elif self.current_token().type == TokenType.CATCH:
-                    self.advance()
-                    catch_message = self.expect(TokenType.STRING).value
-                else:
-                    break
-            
-            if unique_name:
-                mythics.append(MythicItem(unique_name, placement, can_pickup, catch_message))
-        
-        return mythics
-    
-    def parse_items(self) -> List[ItemDecl]:
-        self.expect(TokenType.ITEMS)
-        self.expect(TokenType.COLON)
-        
-        items = []
-        while self.current_token().type == TokenType.IDENTIFIER:
-            item_type = self.expect(TokenType.IDENTIFIER).value
-            self.expect(TokenType.COLON)
-            
-            unique_name = None
-            placement = None
-            can_pickup = False
-            effect = None
-            damage = None
-            catch_message = None
-            
-            # Parse properties
-            while self.current_token().type in [TokenType.IDENTIFIER, TokenType.STRING, TokenType.AT, TokenType.CAN, TokenType.CATCH, TokenType.DAMAGE, TokenType.COMMA, TokenType.PLACE]:
-                # Skip commas
-                if self.current_token().type == TokenType.COMMA:
-                    self.advance()
-                    continue
-                    
-                if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'unique_name':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    unique_name = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.PLACE:
-                    self.advance()
-                    self.expect(TokenType.AT)
-                    placement = self.parse_placement()
-                elif self.current_token().type == TokenType.CAN:
-                    # "can be used to" or "can be picked up by the user"
-                    self.advance()
-                    self.expect(TokenType.BE)
-                    if self.current_token().type == TokenType.USE:
-                        self.advance()
-                        self.expect(TokenType.TO)
-                        # Parse effect description
-                        effect_parts = []
-                        while self.current_token().type not in [TokenType.COMMA, TokenType.CATCH, TokenType.EOF] and self.current_token().type != TokenType.IDENTIFIER:
-                            if self.current_token().type == TokenType.STRING:
-                                effect = self.expect(TokenType.STRING).value
-                                break
-                            elif self.current_token().type == TokenType.IDENTIFIER:
-                                effect_parts.append(self.expect(TokenType.IDENTIFIER).value)
-                            else:
-                                self.advance()
-                        if not effect:
-                            effect = ' '.join(effect_parts)
-                    elif self.current_token().type == TokenType.PICKED:
-                        self.expect(TokenType.PICKED)
-                        self.expect(TokenType.UP)
-                        self.expect(TokenType.BY)
-                        self.expect(TokenType.THE)
-                        # Accept either USER token or IDENTIFIER for 'user'
-                        if self.current_token().type == TokenType.USER:
-                            self.advance()
-                        else:
-                            self.expect(TokenType.IDENTIFIER)  # 'user'
-                        can_pickup = True
-                elif self.current_token().type == TokenType.DAMAGE:
-                    self.advance()
-                    damage = int(self.expect(TokenType.NUMBER).value)
-                elif self.current_token().type == TokenType.CATCH:
-                    self.advance()
-                    catch_message = self.expect(TokenType.STRING).value
-                else:
-                    break
-            
-            if unique_name:
-                items.append(ItemDecl(item_type, unique_name, placement, can_pickup, effect, damage, catch_message))
-        
-        return items
-    
-    def parse_monsters(self) -> List[MonsterDecl]:
-        self.expect(TokenType.MONSTERS)
-        self.expect(TokenType.COLON)
-        
-        monsters = []
-        while self.current_token().type == TokenType.IDENTIFIER:
-            # monster-static:, monster-dynamic:, or monster-boss:
-            monster_type_token = self.expect(TokenType.IDENTIFIER)
-            monster_type = monster_type_token.value  # 'monster-static', 'monster-dynamic', or 'monster-boss'
-            if monster_type not in ['monster-static', 'monster-dynamic', 'monster-boss']:
-                raise SyntaxError(f"Expected 'monster-static', 'monster-dynamic', or 'monster-boss', got '{monster_type}' at line {monster_type_token.line}")
-            self.expect(TokenType.COLON)
-            
-            unique_name = None
-            placement = None
-            health = None
-            killable_hits = None
-            experience = None
-            
-            # Parse properties
-            while self.current_token().type in [TokenType.IDENTIFIER, TokenType.STRING, TokenType.AT, TokenType.HEALTH, TokenType.KILLABLE, TokenType.GIVES, TokenType.COMMA, TokenType.PLACE]:
-                # Skip commas
-                if self.current_token().type == TokenType.COMMA:
-                    self.advance()
-                    continue
-                    
-                if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'unique_name':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    unique_name = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.PLACE:
-                    self.advance()
-                    self.expect(TokenType.AT)
-                    placement = self.parse_placement()
-                elif self.current_token().type == TokenType.HEALTH:
-                    self.advance()
-                    health = int(self.expect(TokenType.NUMBER).value)
-                elif self.current_token().type == TokenType.KILLABLE:
-                    self.advance()
-                    killable_hits = int(self.expect(TokenType.NUMBER).value)
-                    self.expect(TokenType.HIT)
-                elif self.current_token().type == TokenType.GIVES:
-                    self.advance()
-                    experience = int(self.expect(TokenType.NUMBER).value)
-                    self.expect(TokenType.EXPERIENCE)
-                else:
-                    break
-            
-            if unique_name:
-                monsters.append(MonsterDecl(unique_name, monster_type, placement, health, killable_hits, experience))
-        
-        return monsters
-    
-    def parse_user(self) -> UserDecl:
-        self.expect(TokenType.USER)
-        self.expect(TokenType.COLON)
-        
-        unique_name = None
-        context = None
-        position = None
-        
-        # Parse properties
-        while self.current_token().type in [TokenType.IDENTIFIER, TokenType.STRING, TokenType.AT, TokenType.COMMA]:
-            # Skip commas
-            if self.current_token().type == TokenType.COMMA:
-                self.advance()
-                continue
-                
-            if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'unique_name':
-                self.advance()
-                self.expect(TokenType.EQUALS)
-                unique_name = self.expect(TokenType.STRING).value
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'context':
-                self.advance()
-                context = self.expect(TokenType.STRING).value
-            elif self.current_token().type == TokenType.AT:
-                self.advance()
-                position = self.parse_coordinate()
-            else:
-                break
-        
-        return UserDecl(unique_name or "player", context, position)
-    
-    def parse_llm_config(self, init: InitSection):
-        self.expect(TokenType.IDENTIFIER)  # 'llm'
-        self.expect(TokenType.COLON)
-        
-        while self.current_token().type == TokenType.IDENTIFIER:
-            if self.current_token().value == 'endpoint':
-                self.advance()
-                init.llm_endpoint = self.expect(TokenType.STRING).value
-            elif self.current_token().value == 'token':
-                self.advance()
-                init.llm_token = self.expect(TokenType.STRING).value
-            else:
-                break
-    
-    def parse_npcs(self) -> List[NPCDecl]:
-        self.expect(TokenType.NPC)
-        self.expect(TokenType.COLON)
-        
-        npcs = []
-        while self.current_token().type == TokenType.IDENTIFIER:
-            npc_type = self.expect(TokenType.IDENTIFIER).value  # 'npc-static', 'npc-dynamic', etc.
-            self.expect(TokenType.COLON)
-            
-            unique_name = None
-            placement = None
-            context = None
-            response = None
-            state_machine = None
-            emoji = None
-            agenda = None
-            conditions = []
-            catch_message = None
-            
-            # Parse properties
-            while self.current_token().type in [TokenType.IDENTIFIER, TokenType.STRING, TokenType.IF, TokenType.CATCH, TokenType.PLACE, TokenType.AT]:
-                if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'unique_name':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    unique_name = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.PLACE:
-                    self.advance()
-                    self.expect(TokenType.AT)
-                    placement = self.parse_placement()
-                elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'context':
-                    self.advance()
-                    context = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'response':
-                    self.advance()
-                    response = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'state_machine':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    state_machine = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'emoji':
-                    self.advance()
-                    self.expect(TokenType.EQUALS)
-                    emoji = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'agenda':
-                    self.advance()
-                    agenda = self.expect(TokenType.STRING).value
-                elif self.current_token().type == TokenType.IF:
-                    conditions.append(self.parse_npc_condition())
-                elif self.current_token().type == TokenType.CATCH:
-                    self.advance()
-                    catch_message = self.expect(TokenType.STRING).value
-                else:
-                    break
-            
-            if unique_name:
-                npcs.append(NPCDecl(npc_type, unique_name, placement, context, response, state_machine, emoji, agenda, conditions, catch_message))
-        
-        return npcs
-    
-    def parse_npc_condition(self) -> NPCCondition:
-        self.expect(TokenType.IF)
-        self.expect(TokenType.IDENTIFIER)  # 'user'
-        self.expect(TokenType.HAS)
-        
-        condition_type = self.expect(TokenType.IDENTIFIER).value  # 'item', 'experience', 'health'
-        operator = None
-        value = None
-        
-        if condition_type == 'item':
-            value = self.expect(TokenType.STRING).value
-        else:
-            operator = self.expect(TokenType.GT).value if self.current_token().type == TokenType.GT else None
-            if not operator:
-                operator = self.expect(TokenType.LT).value if self.current_token().type == TokenType.LT else None
-            if not operator:
-                operator = self.expect(TokenType.GTE).value if self.current_token().type == TokenType.GTE else None
-            if not operator:
-                operator = self.expect(TokenType.LTE).value if self.current_token().type == TokenType.LTE else None
-            if not operator:
-                operator = self.expect(TokenType.EQ).value if self.current_token().type == TokenType.EQ else None
-            if not operator:
-                operator = "=="  # Default
-            value = self.expect(TokenType.NUMBER).value
-        
-        self.expect(TokenType.THEN)
-        action_type = self.expect(TokenType.IDENTIFIER).value  # 'response' or 'context'
-        action_value = self.expect(TokenType.STRING).value
-        
-        return NPCCondition(condition_type, operator, value, action_type, action_value)
-    
-    def parse_rules_section(self) -> RulesSection:
-        self.expect(TokenType.RULES)
-        self.expect(TokenType.COLON)
-        
-        rules = []
-        while self.current_token().type == TokenType.IF:
-            rules.append(self.parse_rule())
-        
-        return RulesSection(rules)
-    
-    def parse_rule(self) -> Rule:
-        conditions = []
-        action = None
-        
-        self.expect(TokenType.IF)
-        conditions.append(self.parse_condition())
-        
-        while self.current_token().type == TokenType.AND:
-            self.advance()
-            conditions.append(self.parse_condition())
-        
-        self.expect(TokenType.THEN)
-        action = self.parse_action()
-        
-        return Rule(conditions, action)
-    
-    def parse_condition(self) -> Condition:
-        # Accept either USER token or IDENTIFIER for entity name
-        if self.current_token().type == TokenType.USER:
-            self.advance()
-            entity = 'user'
-        else:
-            entity = self.expect(TokenType.IDENTIFIER).value
-        
-        # Check for "responded" or "responds" first (before other condition types)
-        # This handles "wizard responded" where wizard is the entity
-        if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value in ['responded', 'responds']:
-            # "wizard responded" or "wizard responds" -> Condition('responded_to', 'wizard', None, None)
-            self.advance()  # consume 'responded' or 'responds'
-            npc_name = entity  # The entity is the NPC name
-            return Condition('responded_to', npc_name, None, None)
-        
-        if self.current_token().type == TokenType.IS:
-            self.advance()
-            self.expect(TokenType.AT)
-            position = self.parse_coordinate()
-            return Condition('position', entity, None, None, position)
-        elif self.current_token().type == TokenType.HAS:
-            self.advance()
-            # Could be: has item, has experience > 100, has health < 50
-            if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value in ['item', 'experience', 'health']:
-                attr = self.expect(TokenType.IDENTIFIER).value
-                if attr == 'item':
-                    value = self.expect(TokenType.STRING).value
-                    return Condition('has', entity, None, value)
-                else:
-                    operator = None
-                    if self.current_token().type in [TokenType.GT, TokenType.LT, TokenType.GTE, TokenType.LTE, TokenType.EQ, TokenType.NE]:
-                        operator = self.current_token().value
-                        self.advance()
-                    else:
-                        operator = "=="
-                    value = self.expect(TokenType.NUMBER).value
-                    return Condition('comparison', entity, operator, value)
-            else:
-                # Simple has check
-                value = self.parse_value()
-                return Condition('has', entity, None, value)
-        elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'talked':
-            # "user talked to wizard" -> Condition('talked_to', 'user', None, 'wizard')
-            self.advance()  # consume 'talked'
-            self.expect(TokenType.TO)
-            npc_name = self.expect(TokenType.IDENTIFIER).value
-            return Condition('talked_to', entity, None, npc_name)
-        else:
-            raise SyntaxError(f"Unexpected condition at line {self.current_token().line}")
-    
-    def parse_action(self) -> Action:
-        token = self.current_token()
-        
-        if token.type == TokenType.IDENTIFIER and token.value.startswith('talk-'):
-            action_type = self.expect(TokenType.IDENTIFIER).value
-            return Action('talk', None, None, action_type)
-        elif token.type == TokenType.LEVEL_UP:
-            self.advance()
-            return Action('level up', None, None, None)
-        else:
-            # Command
-            command = self.expect(TokenType.IDENTIFIER).value
-            return Action('command', command, None, None)
-    
-    def parse_quests_section(self) -> QuestsSection:
-        self.expect(TokenType.QUESTS)
-        self.expect(TokenType.COLON)
-        
-        quests = []
-        # Support both named quests (name: if ...) and unnamed quests (if ...)
-        while self.current_token().type in [TokenType.IF, TokenType.IDENTIFIER]:
-            # Check if this is a named quest (identifier followed by colon)
-            quest_name = None
-            if self.current_token().type == TokenType.IDENTIFIER:
-                # Peek ahead to see if next token is COLON
-                if self.peek_token().type == TokenType.COLON:
-                    quest_name = self.current_token().value
-                    self.advance()  # consume the identifier
-                    self.advance()  # consume the colon
-            
-            quests.append(self.parse_quest(quest_name))
-        
-        return QuestsSection(quests)
-    
-    def parse_quest(self, name: Optional[str] = None) -> Quest:
-        conditions = []
-        action = None
-        
-        self.expect(TokenType.IF)
-        conditions.append(self.parse_condition())
-        
-        while self.current_token().type == TokenType.AND:
-            self.advance()
-            conditions.append(self.parse_condition())
-        
-        self.expect(TokenType.THEN)
-        action = self.parse_action()
-        
-        return Quest(name, conditions, action)
-    
-    def parse_end_game_section(self) -> EndGameSection:
-        self.expect(TokenType.END_GAME)
-        self.expect(TokenType.COLON)
-        
-        conditions = []
-        win_message = None
-        lose_message = None
-        
-        while self.current_token().type != TokenType.EOF:
-            if self.current_token().type == TokenType.IF:
-                self.advance()  # Consume 'if'
-                # Parse condition(s) - can have multiple with "and"
-                condition_list = []
-                condition_list.append(self.parse_condition())
-                while self.current_token().type == TokenType.AND:
-                    self.advance()
-                    condition_list.append(self.parse_condition())
-                
-                result = None
-                if self.current_token().type == TokenType.THEN:
-                    self.advance()
-                    if self.current_token().type == TokenType.WIN:
-                        self.advance()
-                        self.expect(TokenType.THE)
-                        self.expect(TokenType.IDENTIFIER)  # 'game'
-                        result = 'win the game'
-                    elif self.current_token().type == TokenType.DIE:
-                        self.advance()
-                        self.expect(TokenType.AND)
-                        self.expect(TokenType.LOSE)
-                        self.expect(TokenType.THE)
-                        self.expect(TokenType.IDENTIFIER)  # 'game'
-                        result = 'die and lose the game'
-                
-                # Store all conditions together as a single EndCondition with a compound condition
-                # We'll use a special marker to indicate this is a grouped condition
-                # Create a compound condition that represents all conditions together
-                if len(condition_list) == 1:
-                    conditions.append(EndCondition(condition_list[0], result))
-                else:
-                    # For multiple conditions, we need to store them as a group
-                    # We'll create a special condition type that represents "all of these"
-                    # For now, store them all with the same result - the JS will check all
-                    for cond in condition_list:
-                        conditions.append(EndCondition(cond, result))
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'win_the_game':
-                self.advance()
-                self.expect(TokenType.COLON)
-                self.expect(TokenType.SHOW)
-                win_message = self.expect(TokenType.STRING).value
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'lose_the_game':
-                self.advance()
-                self.expect(TokenType.COLON)
-                self.expect(TokenType.SHOW)
-                lose_message = self.expect(TokenType.STRING).value
-            else:
-                break
-        
-        return EndGameSection(conditions, win_message, lose_message)
-    
-    def parse_on_game_start_section(self) -> OnGameStartSection:
-        self.expect(TokenType.ON_GAME_START)
-        self.expect(TokenType.COLON)
-        
-        title = None
-        text_lines = []
-        links = []
-        
-        while self.current_token().type != TokenType.EOF:
-            if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_title':
-                self.advance()  # consume 'display_title'
-                self.expect(TokenType.COLON)
-                # Title can be a string or unquoted text (collect tokens until next command or EOF)
-                if self.current_token().type == TokenType.STRING:
-                    title = self.expect(TokenType.STRING).value
-                else:
-                    # Collect tokens until we hit the next display_ command or end of section
-                    title_parts = []
-                    while (self.current_token().type != TokenType.EOF and 
-                           not (self.current_token().type == TokenType.IDENTIFIER and 
-                                self.current_token().value.startswith('display_'))):
-                        token = self.current_token()
-                        if token.type == TokenType.IDENTIFIER or token.type == TokenType.STRING:
-                            title_parts.append(token.value)
-                        elif token.type in [TokenType.NUMBER, TokenType.BOOLEAN]:
-                            title_parts.append(str(token.value))
-                        else:
-                            # Include punctuation and other characters as-is
-                            title_parts.append(str(token.value) if token.value else '')
-                        self.advance()
-                    title = ' '.join(title_parts).strip()
-                    if not title:
-                        title = None
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_text':
-                self.advance()  # consume 'display_text'
-                self.expect(TokenType.COLON)
-                # Text must be a string
-                text_lines.append(self.expect(TokenType.STRING).value)
-            elif self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == 'display_link':
-                self.advance()  # consume 'display_link'
-                self.expect(TokenType.COLON)
-                # display_link: "anchor", "url"
-                anchor_text = self.expect(TokenType.STRING).value
-                self.expect(TokenType.COMMA)
-                url = self.expect(TokenType.STRING).value
-                links.append((anchor_text, url))
-            else:
-                break
-        
-        return OnGameStartSection(title, text_lines, links)
-
-
-class Validator:
-    def __init__(self, program: Program):
-        self.program = program
-        self.errors = []
-    
-    def validate(self):
-        if not self.program.init_section:
-            self.errors.append("Missing required 'init:' section")
-            return
-        
-        self.validate_uniqueness()
-        self.validate_collisions()
-        self.validate_semantics()
-    
-    def validate_uniqueness(self):
-        unique_names = set()
-        
-        # Check mythics
-        for mythic in self.program.init_section.mythics:
-            if mythic.unique_name in unique_names:
-                self.errors.append(f"Duplicate unique_name: {mythic.unique_name}")
-            unique_names.add(mythic.unique_name)
-        
-        # Check items
-        for item in self.program.init_section.items:
-            if item.unique_name in unique_names:
-                self.errors.append(f"Duplicate unique_name: {item.unique_name}")
-            unique_names.add(item.unique_name)
-        
-        # Check monsters
-        for monster in self.program.init_section.monsters:
-            if monster.unique_name in unique_names:
-                self.errors.append(f"Duplicate unique_name: {monster.unique_name}")
-            unique_names.add(monster.unique_name)
-        
-        # Check NPCs
-        for npc in self.program.init_section.npcs:
-            if npc.unique_name in unique_names:
-                self.errors.append(f"Duplicate unique_name: {npc.unique_name}")
-            unique_names.add(npc.unique_name)
-        
-        # Check user
-        if self.program.init_section.user:
-            if self.program.init_section.user.unique_name in unique_names:
-                self.errors.append(f"Duplicate unique_name: {self.program.init_section.user.unique_name}")
-    
-    def validate_collisions(self):
-        # Track entity positions
-        entity_positions = {}  # (x, y) -> list of entity names
-        
-        # Check fixed placements (not random)
-        for mythic in self.program.init_section.mythics:
-            if mythic.placement and mythic.placement.type == 'coordinate':
-                pos = mythic.placement.coord1
-                if pos not in entity_positions:
-                    entity_positions[pos] = []
-                entity_positions[pos].append(f"mythic:{mythic.unique_name}")
-        
-        for item in self.program.init_section.items:
-            if item.placement and item.placement.type == 'coordinate':
-                pos = item.placement.coord1
-                if pos not in entity_positions:
-                    entity_positions[pos] = []
-                entity_positions[pos].append(f"item:{item.unique_name}")
-        
-        for monster in self.program.init_section.monsters:
-            if monster.placement and monster.placement.type == 'coordinate':
-                pos = monster.placement.coord1
-                if pos not in entity_positions:
-                    entity_positions[pos] = []
-                entity_positions[pos].append(f"monster:{monster.unique_name}")
-        
-        for npc in self.program.init_section.npcs:
-            if npc.placement and npc.placement.type == 'coordinate':
-                pos = npc.placement.coord1
-                if pos not in entity_positions:
-                    entity_positions[pos] = []
-                entity_positions[pos].append(f"npc:{npc.unique_name}")
-        
-        # Check for collisions (items, monsters, NPCs shouldn't overlap)
-        for pos, entities in entity_positions.items():
-            if len(entities) > 1:
-                # Allow items/mythics on same cell, but warn about monsters/NPCs
-                non_pickup = [e for e in entities if not e.startswith('item:') and not e.startswith('mythic:')]
-                if len(non_pickup) > 1:
-                    self.errors.append(f"Collision at {pos}: {', '.join(entities)}")
-    
-    def validate_semantics(self):
-        # Basic semantic checks
-        if self.program.init_section.user and not self.program.init_section.user.position:
-            self.errors.append("User must have an initial position")
-        
-        # Check that npc-static NPCs have placement
-        for npc in self.program.init_section.npcs:
-            if npc.npc_type == 'npc-static' and not npc.placement:
-                self.errors.append(f"npc-static '{npc.unique_name}' must have a placement specified")
-        
-        # Check that rules reference valid entities
-        if self.program.rules_section:
-            for rule in self.program.rules_section.rules:
-                for condition in rule.conditions:
-                    if condition.entity != 'user':
-                        # Check if entity exists
-                        found = False
-                        for mythic in self.program.init_section.mythics:
-                            if mythic.unique_name == condition.entity:
-                                found = True
-                                break
-                        if not found:
-                            for item in self.program.init_section.items:
-                                if item.unique_name == condition.entity:
-                                    found = True
-                                    break
-                        if not found:
-                            for monster in self.program.init_section.monsters:
-                                if monster.unique_name == condition.entity:
-                                    found = True
-                                    break
-                        if not found:
-                            for npc in self.program.init_section.npcs:
-                                if npc.unique_name == condition.entity:
-                                    found = True
-                                    break
-                        if not found:
-                            self.errors.append(f"Unknown entity referenced in rule: {condition.entity}")
-
-
-class CodeGenerator:
-    def __init__(self, program: Program):
-        self.program = program
-    
-    def generate(self) -> str:
-        html = f"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dungeon Game</title>
     <style>
-        {self.generate_css()}
-    </style>
-</head>
-<body>
-    {self.generate_html()}
-    <script>
-        {self.generate_javascript()}
-    </script>
-</body>
-</html>"""
-        return html
-    
-    def generate_css(self) -> str:
-        return """
+        
         * {
             margin: 0;
             padding: 0;
@@ -1658,10 +231,11 @@ class CodeGenerator:
         #splash-close:active {
             transform: translateY(0);
         }
-        """
+        
+    </style>
+</head>
+<body>
     
-    def generate_html(self) -> str:
-        return """
     <div id="menu-bar">
         <button class="menu-button" onclick="game.saveGame()">Save</button>
         <button class="menu-button" onclick="document.getElementById('load-input').click()">
@@ -1737,238 +311,2243 @@ class CodeGenerator:
             }
         }
     </script>
-        """
-    
-    def generate_javascript(self) -> str:
-        js_parts = []
         
-        # Game state initialization
-        js_parts.append(self.generate_game_state())
-        
-        # Game engine
-        js_parts.append(self.generate_game_engine())
-        
-        return "\n".join(js_parts)
-    
-    def generate_game_state(self) -> str:
-        init = self.program.init_section
-        world = init.world or WorldDecl(100, 100)
-        
-        state = {
-            'world': {
-                'width': world.width,
-                'height': world.height
-            },
-            'user': {
-                'unique_name': init.user.unique_name if init.user else 'player',
-                'position': list(init.user.position) if init.user and init.user.position else [50, 50],
-                'health': 100,
-                'experience': 0,
-                'level': 1,
-                'inventory': [],
-                'context': init.user.context if init.user else None,
-                'talked_to_npcs': [],
-                'showHealthBar': False
-            },
-            'terrain': {},
-            'furniture': [],
-            'mythics': [],
-            'items': [],
-            'monsters': [],
-            'npcs': [],
-            'variables': {},
-            'quests': [],
-            'rules': [],
-            'end_game': {},
-            'on_game_start': {}
+    <script>
+        const INITIAL_GAME_STATE = {
+  "world": {
+    "width": 1000,
+    "height": 30
+  },
+  "user": {
+    "unique_name": "player",
+    "position": [
+      5,
+      15
+    ],
+    "health": 100,
+    "experience": 0,
+    "level": 1,
+    "inventory": [],
+    "context": "adventurer",
+    "talked_to_npcs": [],
+    "showHealthBar": false
+  },
+  "terrain": {},
+  "furniture": [
+    {
+      "name": "grass",
+      "placement": {
+        "type": "all"
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          0,
+          0
+        ],
+        "coord2": [
+          80,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          0,
+          29
+        ],
+        "coord2": [
+          80,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          80,
+          0
+        ],
+        "coord2": [
+          80,
+          12
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          80,
+          17
+        ],
+        "coord2": [
+          80,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          81,
+          0
+        ],
+        "coord2": [
+          160,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          81,
+          29
+        ],
+        "coord2": [
+          160,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          160,
+          0
+        ],
+        "coord2": [
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          160,
+          20
+        ],
+        "coord2": [
+          160,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          161,
+          0
+        ],
+        "coord2": [
+          240,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          161,
+          29
+        ],
+        "coord2": [
+          240,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          240,
+          0
+        ],
+        "coord2": [
+          240,
+          14
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          240,
+          16
+        ],
+        "coord2": [
+          240,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          241,
+          0
+        ],
+        "coord2": [
+          320,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          241,
+          29
+        ],
+        "coord2": [
+          320,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          320,
+          0
+        ],
+        "coord2": [
+          320,
+          8
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          320,
+          22
+        ],
+        "coord2": [
+          320,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          321,
+          0
+        ],
+        "coord2": [
+          400,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          321,
+          29
+        ],
+        "coord2": [
+          400,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          400,
+          0
+        ],
+        "coord2": [
+          400,
+          13
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          400,
+          17
+        ],
+        "coord2": [
+          400,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          401,
+          0
+        ],
+        "coord2": [
+          480,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          401,
+          29
+        ],
+        "coord2": [
+          480,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          480,
+          0
+        ],
+        "coord2": [
+          480,
+          11
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          480,
+          19
+        ],
+        "coord2": [
+          480,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          481,
+          0
+        ],
+        "coord2": [
+          560,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          481,
+          29
+        ],
+        "coord2": [
+          560,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          560,
+          0
+        ],
+        "coord2": [
+          560,
+          9
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          560,
+          21
+        ],
+        "coord2": [
+          560,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          561,
+          0
+        ],
+        "coord2": [
+          640,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          561,
+          29
+        ],
+        "coord2": [
+          640,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          640,
+          0
+        ],
+        "coord2": [
+          640,
+          12
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          640,
+          18
+        ],
+        "coord2": [
+          640,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          641,
+          0
+        ],
+        "coord2": [
+          720,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          641,
+          29
+        ],
+        "coord2": [
+          720,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          720,
+          0
+        ],
+        "coord2": [
+          720,
+          7
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          720,
+          23
+        ],
+        "coord2": [
+          720,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          721,
+          0
+        ],
+        "coord2": [
+          800,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          721,
+          29
+        ],
+        "coord2": [
+          800,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          800,
+          0
+        ],
+        "coord2": [
+          800,
+          12
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          800,
+          18
+        ],
+        "coord2": [
+          800,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          801,
+          0
+        ],
+        "coord2": [
+          900,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          801,
+          29
+        ],
+        "coord2": [
+          900,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          900,
+          0
+        ],
+        "coord2": [
+          900,
+          5
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          900,
+          25
+        ],
+        "coord2": [
+          900,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          901,
+          0
+        ],
+        "coord2": [
+          999,
+          0
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          901,
+          29
+        ],
+        "coord2": [
+          999,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          901,
+          0
+        ],
+        "coord2": [
+          901,
+          13
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          901,
+          17
+        ],
+        "coord2": [
+          901,
+          29
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          950,
+          5
+        ],
+        "coord2": [
+          999,
+          5
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          950,
+          24
+        ],
+        "coord2": [
+          999,
+          24
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          950,
+          5
+        ],
+        "coord2": [
+          950,
+          13
+        ]
+      }
+    },
+    {
+      "name": "wall",
+      "placement": {
+        "type": "range",
+        "coord1": [
+          950,
+          17
+        ],
+        "coord2": [
+          950,
+          24
+        ]
+      }
+    }
+  ],
+  "mythics": [
+    {
+      "unique_name": "gem_room1_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        15,
+        10
+      ]
+    },
+    {
+      "unique_name": "gem_room1_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        45,
+        20
+      ]
+    },
+    {
+      "unique_name": "gem_room2_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        110,
+        15
+      ]
+    },
+    {
+      "unique_name": "gem_room2_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        130,
+        5
+      ]
+    },
+    {
+      "unique_name": "gem_room3_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        190,
+        18
+      ]
+    },
+    {
+      "unique_name": "gem_room3_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        210,
+        8
+      ]
+    },
+    {
+      "unique_name": "gem_room4_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        270,
+        12
+      ]
+    },
+    {
+      "unique_name": "gem_room4_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        290,
+        22
+      ]
+    },
+    {
+      "unique_name": "gem_room5_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        350,
+        16
+      ]
+    },
+    {
+      "unique_name": "gem_room5_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        370,
+        6
+      ]
+    },
+    {
+      "unique_name": "gem_room6_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        430,
+        14
+      ]
+    },
+    {
+      "unique_name": "gem_room6_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        450,
+        24
+      ]
+    },
+    {
+      "unique_name": "gem_room7_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        510,
+        11
+      ]
+    },
+    {
+      "unique_name": "gem_room7_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        530,
+        21
+      ]
+    },
+    {
+      "unique_name": "gem_room8_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        590,
+        15
+      ]
+    },
+    {
+      "unique_name": "gem_room8_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        610,
+        5
+      ]
+    },
+    {
+      "unique_name": "gem_room9_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        670,
+        19
+      ]
+    },
+    {
+      "unique_name": "gem_room9_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        690,
+        9
+      ]
+    },
+    {
+      "unique_name": "gem_room10_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        750,
+        13
+      ]
+    },
+    {
+      "unique_name": "gem_room10_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        770,
+        23
+      ]
+    },
+    {
+      "unique_name": "gem_room11_1",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        830,
+        17
+      ]
+    },
+    {
+      "unique_name": "gem_room11_2",
+      "can_pickup": true,
+      "picked_up": false,
+      "catch_message": "Not now",
+      "position": [
+        850,
+        7
+      ]
+    }
+  ],
+  "items": [
+    {
+      "unique_name": "potion_start_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        20,
+        5
+      ]
+    },
+    {
+      "unique_name": "potion_start_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        50,
+        25
+      ]
+    },
+    {
+      "unique_name": "potion_goblin_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        120,
+        8
+      ]
+    },
+    {
+      "unique_name": "potion_goblin_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        140,
+        22
+      ]
+    },
+    {
+      "unique_name": "potion_treasure_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        200,
+        3
+      ]
+    },
+    {
+      "unique_name": "potion_treasure_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        220,
+        26
+      ]
+    },
+    {
+      "unique_name": "potion_orc_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        280,
+        6
+      ]
+    },
+    {
+      "unique_name": "potion_orc_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        300,
+        24
+      ]
+    },
+    {
+      "unique_name": "potion_crystal_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        360,
+        4
+      ]
+    },
+    {
+      "unique_name": "potion_crystal_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        380,
+        25
+      ]
+    },
+    {
+      "unique_name": "potion_shadow_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        440,
+        7
+      ]
+    },
+    {
+      "unique_name": "potion_shadow_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        460,
+        23
+      ]
+    },
+    {
+      "unique_name": "potion_fire_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        520,
+        5
+      ]
+    },
+    {
+      "unique_name": "potion_fire_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        540,
+        24
+      ]
+    },
+    {
+      "unique_name": "potion_ice_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        600,
+        8
+      ]
+    },
+    {
+      "unique_name": "potion_ice_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        620,
+        21
+      ]
+    },
+    {
+      "unique_name": "potion_library_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        680,
+        3
+      ]
+    },
+    {
+      "unique_name": "potion_library_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        700,
+        26
+      ]
+    },
+    {
+      "unique_name": "potion_dragon_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        760,
+        6
+      ]
+    },
+    {
+      "unique_name": "potion_dragon_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        780,
+        23
+      ]
+    },
+    {
+      "unique_name": "potion_dragon_3",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        780,
+        8
+      ]
+    },
+    {
+      "unique_name": "potion_final_1",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        810,
+        5
+      ]
+    },
+    {
+      "unique_name": "potion_final_2",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        870,
+        5
+      ]
+    },
+    {
+      "unique_name": "potion_final_3",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        810,
+        25
+      ]
+    },
+    {
+      "unique_name": "potion_final_4",
+      "item_type": "item-heal",
+      "can_pickup": true,
+      "picked_up": false,
+      "effect": null,
+      "damage": 1,
+      "catch_message": "Not now",
+      "position": [
+        870,
+        25
+      ]
+    }
+  ],
+  "monsters": [
+    {
+      "unique_name": "guard_start_1",
+      "monster_type": "monster-static",
+      "health": 2,
+      "max_health": 2,
+      "experience": 20,
+      "defeated": false,
+      "position": [
+        30,
+        15
+      ]
+    },
+    {
+      "unique_name": "guard_start_2",
+      "monster_type": "monster-static",
+      "health": 2,
+      "max_health": 2,
+      "experience": 20,
+      "defeated": false,
+      "position": [
+        60,
+        15
+      ]
+    },
+    {
+      "unique_name": "ninja_start",
+      "monster_type": "monster-dynamic",
+      "health": 2,
+      "max_health": 2,
+      "experience": 25,
+      "defeated": false,
+      "position": [
+        40,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_start",
+      "monster_type": "monster-boss",
+      "health": 8,
+      "max_health": 8,
+      "experience": 100,
+      "defeated": false,
+      "position": [
+        50,
+        10
+      ]
+    },
+    {
+      "unique_name": "goblin_den_1",
+      "monster_type": "monster-static",
+      "health": 3,
+      "max_health": 3,
+      "experience": 30,
+      "defeated": false,
+      "position": [
+        100,
+        15
+      ]
+    },
+    {
+      "unique_name": "goblin_den_2",
+      "monster_type": "monster-static",
+      "health": 3,
+      "max_health": 3,
+      "experience": 30,
+      "defeated": false,
+      "position": [
+        120,
+        5
+      ]
+    },
+    {
+      "unique_name": "goblin_den_3",
+      "monster_type": "monster-static",
+      "health": 3,
+      "max_health": 3,
+      "experience": 30,
+      "defeated": false,
+      "position": [
+        140,
+        25
+      ]
+    },
+    {
+      "unique_name": "ninja_goblin",
+      "monster_type": "monster-dynamic",
+      "health": 3,
+      "max_health": 3,
+      "experience": 35,
+      "defeated": false,
+      "position": [
+        110,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_goblin",
+      "monster_type": "monster-boss",
+      "health": 12,
+      "max_health": 12,
+      "experience": 150,
+      "defeated": false,
+      "position": [
+        130,
+        15
+      ]
+    },
+    {
+      "unique_name": "vault_guard_1",
+      "monster_type": "monster-static",
+      "health": 4,
+      "max_health": 4,
+      "experience": 40,
+      "defeated": false,
+      "position": [
+        180,
+        15
+      ]
+    },
+    {
+      "unique_name": "vault_guard_2",
+      "monster_type": "monster-static",
+      "health": 4,
+      "max_health": 4,
+      "experience": 40,
+      "defeated": false,
+      "position": [
+        200,
+        8
+      ]
+    },
+    {
+      "unique_name": "vault_guard_3",
+      "monster_type": "monster-static",
+      "health": 4,
+      "max_health": 4,
+      "experience": 40,
+      "defeated": false,
+      "position": [
+        220,
+        22
+      ]
+    },
+    {
+      "unique_name": "ninja_vault",
+      "monster_type": "monster-dynamic",
+      "health": 4,
+      "max_health": 4,
+      "experience": 45,
+      "defeated": false,
+      "position": [
+        190,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_vault",
+      "monster_type": "monster-boss",
+      "health": 16,
+      "max_health": 16,
+      "experience": 200,
+      "defeated": false,
+      "position": [
+        200,
+        15
+      ]
+    },
+    {
+      "unique_name": "orc_warrior_1",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        260,
+        15
+      ]
+    },
+    {
+      "unique_name": "orc_warrior_2",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        280,
+        10
+      ]
+    },
+    {
+      "unique_name": "orc_warrior_3",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        300,
+        20
+      ]
+    },
+    {
+      "unique_name": "orc_warrior_4",
+      "monster_type": "monster-static",
+      "health": 4,
+      "max_health": 4,
+      "experience": 40,
+      "defeated": false,
+      "position": [
+        270,
+        5
+      ]
+    },
+    {
+      "unique_name": "ninja_orc",
+      "monster_type": "monster-dynamic",
+      "health": 5,
+      "max_health": 5,
+      "experience": 55,
+      "defeated": false,
+      "position": [
+        270,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_orc",
+      "monster_type": "monster-boss",
+      "health": 20,
+      "max_health": 20,
+      "experience": 250,
+      "defeated": false,
+      "position": [
+        280,
+        15
+      ]
+    },
+    {
+      "unique_name": "crystal_guard_1",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        340,
+        15
+      ]
+    },
+    {
+      "unique_name": "crystal_guard_2",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        360,
+        10
+      ]
+    },
+    {
+      "unique_name": "crystal_guard_3",
+      "monster_type": "monster-static",
+      "health": 5,
+      "max_health": 5,
+      "experience": 50,
+      "defeated": false,
+      "position": [
+        380,
+        20
+      ]
+    },
+    {
+      "unique_name": "ninja_crystal",
+      "monster_type": "monster-dynamic",
+      "health": 5,
+      "max_health": 5,
+      "experience": 55,
+      "defeated": false,
+      "position": [
+        350,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_crystal",
+      "monster_type": "monster-boss",
+      "health": 20,
+      "max_health": 20,
+      "experience": 250,
+      "defeated": false,
+      "position": [
+        360,
+        15
+      ]
+    },
+    {
+      "unique_name": "shadow_beast_1",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        420,
+        15
+      ]
+    },
+    {
+      "unique_name": "shadow_beast_2",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        440,
+        8
+      ]
+    },
+    {
+      "unique_name": "shadow_beast_3",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        460,
+        22
+      ]
+    },
+    {
+      "unique_name": "ninja_shadow",
+      "monster_type": "monster-dynamic",
+      "health": 6,
+      "max_health": 6,
+      "experience": 65,
+      "defeated": false,
+      "position": [
+        430,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_shadow",
+      "monster_type": "monster-boss",
+      "health": 24,
+      "max_health": 24,
+      "experience": 300,
+      "defeated": false,
+      "position": [
+        440,
+        15
+      ]
+    },
+    {
+      "unique_name": "fire_elemental_1",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        500,
+        15
+      ]
+    },
+    {
+      "unique_name": "fire_elemental_2",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        520,
+        9
+      ]
+    },
+    {
+      "unique_name": "fire_elemental_3",
+      "monster_type": "monster-static",
+      "health": 6,
+      "max_health": 6,
+      "experience": 60,
+      "defeated": false,
+      "position": [
+        540,
+        21
+      ]
+    },
+    {
+      "unique_name": "ninja_fire",
+      "monster_type": "monster-dynamic",
+      "health": 6,
+      "max_health": 6,
+      "experience": 65,
+      "defeated": false,
+      "position": [
+        510,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_fire",
+      "monster_type": "monster-boss",
+      "health": 24,
+      "max_health": 24,
+      "experience": 300,
+      "defeated": false,
+      "position": [
+        520,
+        15
+      ]
+    },
+    {
+      "unique_name": "ice_guardian_1",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        580,
+        15
+      ]
+    },
+    {
+      "unique_name": "ice_guardian_2",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        600,
+        11
+      ]
+    },
+    {
+      "unique_name": "ice_guardian_3",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        620,
+        19
+      ]
+    },
+    {
+      "unique_name": "ninja_ice",
+      "monster_type": "monster-dynamic",
+      "health": 7,
+      "max_health": 7,
+      "experience": 75,
+      "defeated": false,
+      "position": [
+        590,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_ice",
+      "monster_type": "monster-boss",
+      "health": 28,
+      "max_health": 28,
+      "experience": 350,
+      "defeated": false,
+      "position": [
+        600,
+        15
+      ]
+    },
+    {
+      "unique_name": "librarian_guard_1",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        660,
+        15
+      ]
+    },
+    {
+      "unique_name": "librarian_guard_2",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        680,
+        7
+      ]
+    },
+    {
+      "unique_name": "librarian_guard_3",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        700,
+        23
+      ]
+    },
+    {
+      "unique_name": "ninja_library",
+      "monster_type": "monster-dynamic",
+      "health": 7,
+      "max_health": 7,
+      "experience": 75,
+      "defeated": false,
+      "position": [
+        670,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_library",
+      "monster_type": "monster-boss",
+      "health": 28,
+      "max_health": 28,
+      "experience": 350,
+      "defeated": false,
+      "position": [
+        680,
+        15
+      ]
+    },
+    {
+      "unique_name": "dragon_minion_1",
+      "monster_type": "monster-static",
+      "health": 8,
+      "max_health": 8,
+      "experience": 80,
+      "defeated": false,
+      "position": [
+        740,
+        15
+      ]
+    },
+    {
+      "unique_name": "dragon_minion_2",
+      "monster_type": "monster-static",
+      "health": 8,
+      "max_health": 8,
+      "experience": 80,
+      "defeated": false,
+      "position": [
+        760,
+        10
+      ]
+    },
+    {
+      "unique_name": "dragon_minion_3",
+      "monster_type": "monster-static",
+      "health": 8,
+      "max_health": 8,
+      "experience": 80,
+      "defeated": false,
+      "position": [
+        780,
+        20
+      ]
+    },
+    {
+      "unique_name": "dragon_minion_4",
+      "monster_type": "monster-static",
+      "health": 7,
+      "max_health": 7,
+      "experience": 70,
+      "defeated": false,
+      "position": [
+        750,
+        5
+      ]
+    },
+    {
+      "unique_name": "ninja_dragon",
+      "monster_type": "monster-dynamic",
+      "health": 8,
+      "max_health": 8,
+      "experience": 85,
+      "defeated": false,
+      "position": [
+        750,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_dragon",
+      "monster_type": "monster-boss",
+      "health": 32,
+      "max_health": 32,
+      "experience": 400,
+      "defeated": false,
+      "position": [
+        760,
+        15
+      ]
+    },
+    {
+      "unique_name": "elite_guard_1",
+      "monster_type": "monster-static",
+      "health": 9,
+      "max_health": 9,
+      "experience": 90,
+      "defeated": false,
+      "position": [
+        820,
+        15
+      ]
+    },
+    {
+      "unique_name": "elite_guard_2",
+      "monster_type": "monster-static",
+      "health": 9,
+      "max_health": 9,
+      "experience": 90,
+      "defeated": false,
+      "position": [
+        840,
+        3
+      ]
+    },
+    {
+      "unique_name": "elite_guard_3",
+      "monster_type": "monster-static",
+      "health": 9,
+      "max_health": 9,
+      "experience": 90,
+      "defeated": false,
+      "position": [
+        860,
+        27
+      ]
+    },
+    {
+      "unique_name": "elite_guard_4",
+      "monster_type": "monster-static",
+      "health": 8,
+      "max_health": 8,
+      "experience": 80,
+      "defeated": false,
+      "position": [
+        830,
+        10
+      ]
+    },
+    {
+      "unique_name": "elite_guard_5",
+      "monster_type": "monster-static",
+      "health": 8,
+      "max_health": 8,
+      "experience": 80,
+      "defeated": false,
+      "position": [
+        850,
+        20
+      ]
+    },
+    {
+      "unique_name": "ninja_elite",
+      "monster_type": "monster-dynamic",
+      "health": 9,
+      "max_health": 9,
+      "experience": 95,
+      "defeated": false,
+      "position": [
+        830,
+        20
+      ]
+    },
+    {
+      "unique_name": "boss_elite",
+      "monster_type": "monster-boss",
+      "health": 36,
+      "max_health": 36,
+      "experience": 450,
+      "defeated": false,
+      "position": [
+        840,
+        15
+      ]
+    },
+    {
+      "unique_name": "final_room_goblin_guard",
+      "monster_type": "monster-static",
+      "health": 10,
+      "max_health": 10,
+      "experience": 100,
+      "defeated": false,
+      "position": [
+        901,
+        15
+      ]
+    },
+    {
+      "unique_name": "ninja_final",
+      "monster_type": "monster-dynamic",
+      "health": 10,
+      "max_health": 10,
+      "experience": 105,
+      "defeated": false,
+      "position": [
+        920,
+        15
+      ]
+    },
+    {
+      "unique_name": "boss_final",
+      "monster_type": "monster-boss",
+      "health": 40,
+      "max_health": 40,
+      "experience": 500,
+      "defeated": false,
+      "position": [
+        950,
+        15
+      ]
+    }
+  ],
+  "npcs": [
+    {
+      "unique_name": "ancient_wisdom_keeper",
+      "npc_type": "npc-dynamic",
+      "context": "You are the Ancient Wisdom Keeper, a powerful entity who has guarded the secrets of the dungeon for millennia. You have watched countless adventurers journey through the 12 chambers, facing goblins, orcs, shadow beasts, fire elementals, ice guardians, and dragon minions. You are wise, mysterious, and know the true purpose of this dungeon. You can answer questions about the journey, the monsters, the treasures, or the deeper meaning of the quest. Be enigmatic but helpful, and congratulate adventurers who have made it this far.",
+      "response": null,
+      "state_machine": "idle",
+      "emoji": "\ud83d\udc64",
+      "agenda": null,
+      "conditions": [],
+      "catch_message": "Not now",
+      "conversation_history": [],
+      "has_responded": false,
+      "position": [
+        975,
+        15
+      ]
+    }
+  ],
+  "variables": {},
+  "quests": [
+    {
+      "id": "collection_quest",
+      "conditions": [
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room1_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room1_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room2_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room2_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room3_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room3_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room4_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room4_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room5_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room5_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room6_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room6_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room7_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room7_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room8_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room8_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room9_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room9_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room10_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room10_2"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room11_1"
+        },
+        {
+          "type": "has",
+          "entity": "user",
+          "value": "gem_room11_2"
         }
-        
-        # Add furniture
-        for furniture in init.furniture:
-            state['furniture'].append({
-                'name': furniture.name,
-                'placement': self.placement_to_dict(furniture.placement)
-            })
-        
-        # Add mythics
-        for mythic in init.mythics:
-            mythic_data = {
-                'unique_name': mythic.unique_name,
-                'can_pickup': mythic.can_pickup,
-                'picked_up': False,
-                'catch_message': mythic.catch_message or "Not now"
-            }
-            if mythic.placement:
-                if mythic.placement.type == 'coordinate':
-                    mythic_data['position'] = list(mythic.placement.coord1)
-                elif mythic.placement.type == 'random':
-                    # Will be placed randomly during initialization
-                    mythic_data['placement'] = {'type': 'random', 'percentage': getattr(mythic.placement, 'percentage', 50)}
-            state['mythics'].append(mythic_data)
-        
-        # Add items
-        for item in init.items:
-            item_data = {
-                'unique_name': item.unique_name,
-                'item_type': item.item_type,
-                'can_pickup': item.can_pickup,
-                'picked_up': False,
-                'effect': item.effect,
-                'damage': item.damage or 1,
-                'catch_message': item.catch_message or "Not now"
-            }
-            if item.placement:
-                if item.placement.type == 'coordinate':
-                    item_data['position'] = list(item.placement.coord1)
-                elif item.placement.type == 'random':
-                    item_data['placement'] = {'type': 'random', 'percentage': getattr(item.placement, 'percentage', 50)}
-            state['items'].append(item_data)
-        
-        # Add monsters
-        for monster in init.monsters:
-            monster_data = {
-                'unique_name': monster.unique_name,
-                'monster_type': monster.monster_type,
-                'health': monster.health or monster.killable_hits or 1,
-                'max_health': monster.health or monster.killable_hits or 1,
-                'experience': monster.experience or 0,
-                'defeated': False
-            }
-            if monster.placement:
-                if monster.placement.type == 'coordinate':
-                    monster_data['position'] = list(monster.placement.coord1)
-                elif monster.placement.type == 'random':
-                    monster_data['placement'] = {'type': 'random', 'percentage': getattr(monster.placement, 'percentage', 50)}
-            state['monsters'].append(monster_data)
-        
-        # Add NPCs
-        for npc in init.npcs:
-            npc_data = {
-                'unique_name': npc.unique_name,
-                'npc_type': npc.npc_type,
-                'context': npc.context,
-                'response': npc.response,
-                'state_machine': npc.state_machine or 'idle',
-                'emoji': npc.emoji or '👤',
-                'agenda': npc.agenda,
-                'conditions': [self.npc_condition_to_dict(c) for c in npc.conditions],
-                'catch_message': npc.catch_message or "Not now",
-                'conversation_history': [],
-                'has_responded': False
-            }
-            # Set NPC position from placement
-            if npc.placement:
-                if npc.placement.type == 'coordinate':
-                    npc_data['position'] = list(npc.placement.coord1)
-                elif npc.placement.type == 'random':
-                    # Random placement will be handled during initialization
-                    npc_data['placement'] = {'type': 'random', 'percentage': getattr(npc.placement, 'percentage', 50)}
-            else:
-                # Only allow no placement for non-static NPCs (dynamic NPCs might be placed later)
-                if npc.npc_type == 'npc-static':
-                    npc_data['position'] = [10, 10]  # Fallback, but validator should catch this
-            state['npcs'].append(npc_data)
-        
-        # Add variables
-        for var in self.program.variables:
-            state['variables'][var.name] = var.value
-        
-        # Add quests
-        if self.program.quests_section:
-            for i, quest in enumerate(self.program.quests_section.quests):
-                # Use quest name if provided, otherwise use quest_{i}
-                quest_id = quest.name if quest.name else f'quest_{i}'
-                state['quests'].append({
-                    'id': quest_id,
-                    'conditions': [self.condition_to_dict(c) for c in quest.conditions],
-                    'action': self.action_to_dict(quest.action),
-                    'status': 'active',
-                    'completed': False
-                })
-        
-        # Add rules
-        if self.program.rules_section:
-            for i, rule in enumerate(self.program.rules_section.rules):
-                state['rules'].append({
-                    'id': f'rule_{i}',
-                    'conditions': [self.condition_to_dict(c) for c in rule.conditions],
-                    'action': self.action_to_dict(rule.action),
-                    'triggered': False
-                })
-        
-        # Add end game
-        if self.program.end_game_section:
-            state['end_game'] = {
-                'conditions': [self.end_condition_to_dict(ec) for ec in self.program.end_game_section.conditions],
-                'win_message': self.program.end_game_section.win_message,
-                'lose_message': self.program.end_game_section.lose_message
-            }
-        
-        # Add on game start (splash screen)
-        if self.program.on_game_start_section:
-            state['on_game_start'] = {
-                'title': self.program.on_game_start_section.title,
-                'text_lines': self.program.on_game_start_section.text_lines,
-                'links': [list(link) for link in self.program.on_game_start_section.links]  # Convert tuples to lists for JSON
-            }
-        
-        return f"const INITIAL_GAME_STATE = {json.dumps(state, indent=2)};"
-    
-    def placement_to_dict(self, placement: Placement) -> dict:
-        if placement.type == 'all':
-            return {'type': 'all'}
-        elif placement.type == 'coordinate':
-            return {'type': 'coordinate', 'coord': list(placement.coord1)}
-        elif placement.type == 'range':
-            return {'type': 'range', 'coord1': list(placement.coord1), 'coord2': list(placement.coord2)}
-        elif placement.type == 'random':
-            percentage = placement.percentage if placement.percentage is not None else 50
-            return {'type': 'random', 'percentage': percentage}
-        return {}
-    
-    def condition_to_dict(self, condition: Condition) -> dict:
-        result = {
-            'type': condition.type,
-            'entity': condition.entity
+      ],
+      "action": {
+        "type": "command",
+        "command": "level up",
+        "target": null,
+        "value": null
+      },
+      "status": "active",
+      "completed": false
+    },
+    {
+      "id": "wisdom_quest",
+      "conditions": [
+        {
+          "type": "talked_to",
+          "entity": "user",
+          "value": "ancient_wisdom_keeper"
         }
-        if condition.position:
-            result['position'] = list(condition.position)
-        if condition.operator:
-            result['operator'] = condition.operator
-        if condition.value is not None:
-            result['value'] = condition.value
-        return result
-    
-    def action_to_dict(self, action: Action) -> dict:
-        return {
-            'type': action.type,
-            'command': action.command,
-            'target': action.target,
-            'value': action.value
-        }
-    
-    def npc_condition_to_dict(self, condition: NPCCondition) -> dict:
-        return {
-            'condition_type': condition.condition_type,
-            'operator': condition.operator,
-            'value': condition.value,
-            'then_action': condition.then_action,
-            'action_value': condition.action_value
-        }
-    
-    def end_condition_to_dict(self, end_condition: EndCondition) -> dict:
-        return {
-            'condition': self.condition_to_dict(end_condition.condition),
-            'result': end_condition.result
-        }
-    
-    def generate_game_engine(self) -> str:
-        # This is a large JavaScript file - I'll generate the core game engine
-        # Due to length, I'll create a comprehensive but focused engine
-        init = self.program.init_section
-        llm_endpoint = json.dumps(init.llm_endpoint) if init and init.llm_endpoint else 'null'
-        llm_token = json.dumps(init.llm_token) if init and init.llm_token else 'null'
-        engine_code = """
+      ],
+      "action": {
+        "type": "command",
+        "command": "level up",
+        "target": null,
+        "value": null
+      },
+      "status": "active",
+      "completed": false
+    }
+  ],
+  "rules": [],
+  "end_game": {
+    "conditions": [
+      {
+        "condition": {
+          "type": "responded_to",
+          "entity": "ancient_wisdom_keeper"
+        },
+        "result": "win the game"
+      }
+    ],
+    "win_message": "Congratulations! You have reached the Sanctuary of Wisdom and gained the knowledge of the Ancient Wisdom Keeper! Your journey through the 12 chambers is complete!",
+    "lose_message": null
+  },
+  "on_game_start": {
+    "title": "The Great Dungeon Journey!",
+    "text_lines": [
+      "Journey through 12 chambers from left to right",
+      "Each room is guarded by monsters and contains treasures",
+      "Reach the Sanctuary of Wisdom at the end to meet the Ancient Wisdom Keeper",
+      "Commands: [arrow-keys] for movement, [Space] and [Enter] to talk/fight",
+      "Use Shift+Arrow keys to pan the camera across the large world",
+      "2025 Langjam"
+    ],
+    "links": [
+      [
+        "github",
+        "https://github.com/mtshomskyieee/langjam-gamejam-2025"
+      ]
+    ]
+  }
+};
+
         // Game Engine
         class DungeonGame {
             constructor() {
@@ -1983,8 +2562,8 @@ class CodeGenerator:
                 this.currentDialogNPC = null;
                 this.interactionTexts = [];
                 this.popupTexts = [];
-                this.llmEndpoint = LLM_ENDPOINT_PLACEHOLDER;
-                this.llmToken = LLM_TOKEN_PLACEHOLDER;
+                this.llmEndpoint = "http://localhost:1234/v1/chat/completions";
+                this.llmToken = "anything";
                 this.npcInteractionHistory = {};
                 this.lastDialogOpenTime = 0;
                 
@@ -2404,7 +2983,7 @@ class CodeGenerator:
                 
                 let contextText = npc.context || '';
                 if (npc.agenda) {
-                    contextText += '\\nAgenda: ' + npc.agenda;
+                    contextText += '\nAgenda: ' + npc.agenda;
                 }
                 
                 content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation"></div>`;
@@ -2470,7 +3049,7 @@ class CodeGenerator:
                         },
                         body: JSON.stringify({
                             messages: [
-                                {role: 'system', content: npc.context || '' + (npc.agenda ? '\\nAgenda: ' + npc.agenda : '')},
+                                {role: 'system', content: npc.context || '' + (npc.agenda ? '\nAgenda: ' + npc.agenda : '')},
                                 ...history.slice(-10) // Last 10 messages
                             ]
                         })
@@ -3214,65 +3793,7 @@ class CodeGenerator:
         window.addEventListener('load', () => {
             game = new DungeonGame();
         });
-        """
-        return engine_code.replace('LLM_ENDPOINT_PLACEHOLDER', llm_endpoint).replace('LLM_TOKEN_PLACEHOLDER', llm_token)
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python compile_dungeon.py <input_file> [output_file]")
-        print("  input_file:  DSL source file to compile")
-        print("  output_file: Output HTML file (default: game.html)")
-        sys.exit(1)
-    
-    input_file = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else "game.html"
-    
-    try:
-        # Read input file
-        with open(input_file, 'r', encoding='utf-8') as f:
-            source_code = f.read()
         
-        # Lex
-        lexer = Lexer(source_code)
-        tokens = lexer.tokenize()
-        
-        # Parse
-        parser = Parser(tokens)
-        program = parser.parse()
-        
-        # Validate
-        validator = Validator(program)
-        validator.validate()
-        
-        if validator.errors:
-            print("Compilation errors found:")
-            for error in validator.errors:
-                print(f"  ERROR: {error}")
-            sys.exit(1)
-        
-        # Generate code
-        generator = CodeGenerator(program)
-        html_output = generator.generate()
-        
-        # Write output
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(html_output)
-        
-        print(f"Successfully compiled {input_file} to {output_file}")
-        
-    except FileNotFoundError:
-        print(f"Error: File '{input_file}' not found")
-        sys.exit(1)
-    except SyntaxError as e:
-        print(f"Syntax Error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+    </script>
+</body>
+</html>
