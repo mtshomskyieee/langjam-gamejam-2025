@@ -2407,7 +2407,13 @@ class CodeGenerator:
                     contextText += '\\nAgenda: ' + npc.agenda;
                 }
                 
-                content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation"></div>`;
+                // Show static response as initial message if available
+                let initialMessage = '';
+                if (npc.response) {
+                    initialMessage = `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                }
+                
+                content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation">${initialMessage}</div>`;
             }
             
             showStateMachineNPCDialog(npc) {
@@ -2439,7 +2445,9 @@ class CodeGenerator:
                 if (this.llmEndpoint && this.llmToken) {
                     this.sendToLLM(npc, message, conversationDiv);
                 } else {
-                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> I'm having trouble thinking right now. Can we talk later?</p>`;
+                    // Use static response as fallback if available
+                    let fallbackResponse = npc.response || "I'm having trouble thinking right now. Can we talk later?";
+                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${fallbackResponse}</p>`;
                     // Mark that NPC has responded (even if LLM not configured)
                     npc.has_responded = true;
                     // Evaluate quests and check end game after NPC responds
@@ -2458,7 +2466,15 @@ class CodeGenerator:
                     const isFileProtocol = window.location.protocol === 'file:';
                     
                     if (isLocalhost && isFileProtocol) {
-                        conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em>Note: To use localhost LLM, please serve this HTML file from a local web server (e.g., python -m http.server) instead of opening it directly. CORS policy blocks file:// requests to localhost.</em></p>`;
+                        // Use static response as fallback if available
+                        if (npc.response) {
+                            conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                            npc.has_responded = true;
+                            this.evaluateQuests();
+                            this.checkEndGame();
+                        } else {
+                            conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em>Note: To use localhost LLM, please serve this HTML file from a local web server (e.g., python -m http.server) instead of opening it directly. CORS policy blocks file:// requests to localhost.</em></p>`;
+                        }
                         return;
                     }
                     
@@ -2500,6 +2516,17 @@ class CodeGenerator:
                     this.checkEndGame();
                 } catch (error) {
                     console.error('LLM request error:', error);
+                    
+                    // Use static response as fallback if available
+                    if (npc.response) {
+                        conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                        npc.has_responded = true;
+                        this.evaluateQuests();
+                        this.checkEndGame();
+                        return;
+                    }
+                    
+                    // Otherwise show error message
                     let errorMsg = "I'm having trouble thinking right now. Can we talk later?";
                     
                     const errorStr = error.toString();
