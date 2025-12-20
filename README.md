@@ -1,3 +1,10 @@
+
+# Medium Article
+https://medium.com/@mtshomsky/my-dungeon-specific-language-for-langjam-gamejam-2025-ba9b76642a42
+
+# Github Link
+https://github.com/mtshomskyieee/langjam-gamejam-2025   
+
 # compile_dungeon - the straight to web dungeon compiler
 
 - Craft your web-deployable dungeon using our dungeon specific language.
