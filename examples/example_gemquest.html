@@ -329,7 +329,8 @@
     "level": 1,
     "inventory": [],
     "context": "hero",
-    "talked_to_npcs": []
+    "talked_to_npcs": [],
+    "showHealthBar": false
   },
   "terrain": {},
   "furniture": [
@@ -568,6 +569,7 @@
             init() {
                 this.resizeCanvas();
                 this.placeRandomEntities();
+                this.centerOnUser();  // Center viewport on user at game start
                 this.updateUI();
                 this.showSplashScreen();
             }
@@ -768,7 +770,23 @@
                             this.state.user.inventory.push(item.unique_name);
                             item.picked_up = true;
                             pickedUpSomething = true;
-                            this.showInteractionText(userPos[0], userPos[1], `Picked up ${item.unique_name}`);
+                            
+                            // Heal 25% if it's a healing item
+                            if (item.item_type === 'item-heal') {
+                                const maxHealth = 100;
+                                const healAmount = Math.floor(maxHealth * 0.25); // 25% of max health
+                                const oldHealth = this.state.user.health;
+                                this.state.user.health = Math.min(maxHealth, this.state.user.health + healAmount);
+                                const actualHeal = this.state.user.health - oldHealth;
+                                
+                                if (actualHeal > 0) {
+                                    this.showInteractionText(userPos[0], userPos[1], `Picked up ${item.unique_name}! Healed ${actualHeal} health!`);
+                                } else {
+                                    this.showInteractionText(userPos[0], userPos[1], `Picked up ${item.unique_name}! (Already at full health)`);
+                                }
+                            } else {
+                                this.showInteractionText(userPos[0], userPos[1], `Picked up ${item.unique_name}`);
+                            }
                         } else {
                             this.showInteractionText(userPos[0], userPos[1], item.catch_message);
                         }
@@ -838,15 +856,26 @@
                 // For now, use default punch attack
                 // TODO: Support "attack <monster> with <item>" command
                 
+                // Show health bars for combat
+                monster.showHealthBar = true;
+                this.state.user.showHealthBar = true;
+                
+                // Set timeout to hide health bars after 3 seconds
+                if (monster.healthBarTimeout) {
+                    clearTimeout(monster.healthBarTimeout);
+                }
+                if (this.state.user.healthBarTimeout) {
+                    clearTimeout(this.state.user.healthBarTimeout);
+                }
+                monster.healthBarTimeout = setTimeout(() => {
+                    monster.showHealthBar = false;
+                }, 3000);
+                this.state.user.healthBarTimeout = setTimeout(() => {
+                    this.state.user.showHealthBar = false;
+                }, 3000);
+                
                 // Apply damage
                 monster.health -= damage;
-                
-                // Show feedback
-                this.showInteractionText(
-                    monster.position[0],
-                    monster.position[1],
-                    `You attack ${monster.unique_name} for ${damage} damage!`
-                );
                 
                 // Check if monster is defeated
                 if (monster.health <= 0) {
@@ -862,14 +891,14 @@
                     
                     // Remove monster from blocking position
                     monster.position = null;
+                    monster.showHealthBar = false;
+                    if (monster.healthBarTimeout) {
+                        clearTimeout(monster.healthBarTimeout);
+                    }
                 } else {
-                    // Monster counter-attacks (simple: 1 damage to user)
-                    this.state.user.health -= 1;
-                    this.showInteractionText(
-                        this.state.user.position[0],
-                        this.state.user.position[1],
-                        `${monster.unique_name} attacks you for 1 damage!`
-                    );
+                    // Monster counter-attacks (2 damage for boss, 1 for others)
+                    const counterDamage = monster.monster_type === 'monster-boss' ? 2 : 1;
+                    this.state.user.health -= counterDamage;
                     
                     // Check if user is defeated
                     if (this.state.user.health <= 0) {
@@ -925,6 +954,14 @@
                     }
                 }
                 
+                // If response contains "|", randomly select one phrase
+                if (response && response.includes('|')) {
+                    const phrases = response.split('|').map(p => p.trim()).filter(p => p.length > 0);
+                    if (phrases.length > 0) {
+                        response = phrases[Math.floor(Math.random() * phrases.length)];
+                    }
+                }
+                
                 content.innerHTML = `<h3>${npc.unique_name}</h3><p>${response}</p>`;
             }
             
@@ -943,7 +980,13 @@
                     contextText += '\nAgenda: ' + npc.agenda;
                 }
                 
-                content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation"></div>`;
+                // Show static response as initial message if available
+                let initialMessage = '';
+                if (npc.response) {
+                    initialMessage = `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                }
+                
+                content.innerHTML = `<h3>${npc.unique_name}</h3><div id="conversation">${initialMessage}</div>`;
             }
             
             showStateMachineNPCDialog(npc) {
@@ -975,7 +1018,9 @@
                 if (this.llmEndpoint && this.llmToken) {
                     this.sendToLLM(npc, message, conversationDiv);
                 } else {
-                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> I'm having trouble thinking right now. Can we talk later?</p>`;
+                    // Use static response as fallback if available
+                    let fallbackResponse = npc.response || "I'm having trouble thinking right now. Can we talk later?";
+                    conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${fallbackResponse}</p>`;
                     // Mark that NPC has responded (even if LLM not configured)
                     npc.has_responded = true;
                     // Evaluate quests and check end game after NPC responds
@@ -994,7 +1039,15 @@
                     const isFileProtocol = window.location.protocol === 'file:';
                     
                     if (isLocalhost && isFileProtocol) {
-                        conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em>Note: To use localhost LLM, please serve this HTML file from a local web server (e.g., python -m http.server) instead of opening it directly. CORS policy blocks file:// requests to localhost.</em></p>`;
+                        // Use static response as fallback if available
+                        if (npc.response) {
+                            conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                            npc.has_responded = true;
+                            this.evaluateQuests();
+                            this.checkEndGame();
+                        } else {
+                            conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> <em>Note: To use localhost LLM, please serve this HTML file from a local web server (e.g., python -m http.server) instead of opening it directly. CORS policy blocks file:// requests to localhost.</em></p>`;
+                        }
                         return;
                     }
                     
@@ -1036,6 +1089,17 @@
                     this.checkEndGame();
                 } catch (error) {
                     console.error('LLM request error:', error);
+                    
+                    // Use static response as fallback if available
+                    if (npc.response) {
+                        conversationDiv.innerHTML += `<p><strong>${npc.unique_name}:</strong> ${npc.response}</p>`;
+                        npc.has_responded = true;
+                        this.evaluateQuests();
+                        this.checkEndGame();
+                        return;
+                    }
+                    
+                    // Otherwise show error message
                     let errorMsg = "I'm having trouble thinking right now. Can we talk later?";
                     
                     const errorStr = error.toString();
@@ -1419,8 +1483,22 @@
                         const screenY = centerY + (monster.position[1] - this.viewportY) * cellSize;
                         if (screenX >= -cellSize && screenX <= this.canvas.width + cellSize &&
                             screenY >= -cellSize && screenY <= this.canvas.height + cellSize) {
-                            this.ctx.font = `${cellSize * 0.8}px Arial`;
-                            this.ctx.fillText('👹', screenX, screenY + cellSize * 0.8);
+                            // Boss monsters are 4x bigger
+                            const isBoss = monster.monster_type === 'monster-boss';
+                            const fontSize = isBoss ? cellSize * 3.2 : cellSize * 0.8; // 4x bigger = 3.2x font size (0.8 * 4)
+                            this.ctx.font = `${fontSize}px Arial`;
+                            
+                            // Use skull emoji for dynamic/boss monsters, ogre emoji for static monsters
+                            const emoji = (monster.monster_type === 'monster-dynamic' || monster.monster_type === 'monster-boss') ? '💀' : '👹';
+                            const yOffset = isBoss ? cellSize * 3.2 : cellSize * 0.8;
+                            this.ctx.fillText(emoji, screenX, screenY + yOffset);
+                            
+                            // Draw health bar if monster is in combat
+                            if (monster.showHealthBar) {
+                                const barY = isBoss ? screenY - 40 : screenY - 10;
+                                const barSize = isBoss ? cellSize * 4 : cellSize;
+                                this.drawHealthBar(screenX, barY, monster.health, monster.max_health, barSize);
+                            }
                         }
                     }
                 }
@@ -1444,6 +1522,11 @@
                 this.ctx.font = `${cellSize * 0.8}px Arial`;
                 this.ctx.fillText('🧙', userScreenX, userScreenY + cellSize * 0.8);
                 
+                // Draw health bar if user is in combat
+                if (this.state.user.showHealthBar) {
+                    this.drawHealthBar(userScreenX, userScreenY - 10, this.state.user.health, 100, cellSize);
+                }
+                
                 // Draw interaction texts
                 for (let textObj of this.interactionTexts) {
                     const screenX = centerX + (textObj.x - this.viewportX) * cellSize;
@@ -1455,9 +1538,169 @@
                 }
             }
             
+            drawHealthBar(x, y, currentHealth, maxHealth, cellSize) {
+                const barWidth = cellSize * 0.8;
+                const barHeight = 6;
+                const healthPercent = Math.max(0, Math.min(1, currentHealth / maxHealth));
+                
+                // Draw background (red/dark)
+                this.ctx.fillStyle = '#333';
+                this.ctx.fillRect(x - barWidth / 2, y, barWidth, barHeight);
+                
+                // Draw health (green to red gradient)
+                if (healthPercent > 0.5) {
+                    this.ctx.fillStyle = '#0f0'; // Green
+                } else if (healthPercent > 0.25) {
+                    this.ctx.fillStyle = '#ff0'; // Yellow
+                } else {
+                    this.ctx.fillStyle = '#f00'; // Red
+                }
+                this.ctx.fillRect(x - barWidth / 2, y, barWidth * healthPercent, barHeight);
+                
+                // Draw border
+                this.ctx.strokeStyle = '#fff';
+                this.ctx.lineWidth = 1;
+                this.ctx.strokeRect(x - barWidth / 2, y, barWidth, barHeight);
+            }
+            
             gameLoop() {
+                this.updateDynamicMonsters();
                 this.render();
                 requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            updateDynamicMonsters() {
+                // Update dynamic monsters to chase the hero if within 10 units
+                const heroPos = this.state.user.position;
+                const currentTime = Date.now();
+                
+                for (let monster of this.state.monsters) {
+                    if ((monster.monster_type === 'monster-dynamic' || monster.monster_type === 'monster-boss') && !monster.defeated && monster.position) {
+                        const dx = heroPos[0] - monster.position[0];
+                        const dy = heroPos[1] - monster.position[1];
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Check if monster is adjacent to player (distance <= 1 for adjacent cells)
+                        const isAdjacent = Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && (Math.abs(dx) + Math.abs(dy)) <= 1;
+                        
+                        // Attack player if adjacent and cooldown has passed (3 seconds = 3000ms)
+                        if (isAdjacent) {
+                            // Initialize lastAttackTime if not set
+                            if (!monster.lastAttackTime) {
+                                monster.lastAttackTime = 0;
+                            }
+                            
+                            // Attack if 3 seconds (3000ms) have passed since last attack
+                            if (currentTime - monster.lastAttackTime >= 3000) {
+                                monster.lastAttackTime = currentTime;
+                                
+                                // Show health bars for combat
+                                monster.showHealthBar = true;
+                                this.state.user.showHealthBar = true;
+                                
+                                // Set timeout to hide health bars after 3 seconds
+                                if (monster.healthBarTimeout) {
+                                    clearTimeout(monster.healthBarTimeout);
+                                }
+                                if (this.state.user.healthBarTimeout) {
+                                    clearTimeout(this.state.user.healthBarTimeout);
+                                }
+                                monster.healthBarTimeout = setTimeout(() => {
+                                    monster.showHealthBar = false;
+                                }, 3000);
+                                this.state.user.healthBarTimeout = setTimeout(() => {
+                                    this.state.user.showHealthBar = false;
+                                }, 3000);
+                                
+                                // Deal damage to player (2 for boss, 1 for dynamic)
+                                const damage = monster.monster_type === 'monster-boss' ? 2 : 1;
+                                this.state.user.health -= damage;
+                                
+                                // Check if user is defeated
+                                if (this.state.user.health <= 0) {
+                                    this.checkEndGame(); // This will trigger lose condition if health <= 0
+                                }
+                                
+                                this.updateUI();
+                            }
+                        }
+                        // If hero is within 10 units but not adjacent, move towards hero slowly
+                        else if (distance <= 10 && distance > 0) {
+                            // Calculate direction (normalized)
+                            const dirX = dx / distance;
+                            const dirY = dy / distance;
+                            
+                            // Move slowly (0.1 units per frame, but we'll move in discrete steps)
+                            // Use a counter to slow down movement
+                            if (!monster.moveCounter) {
+                                monster.moveCounter = 0;
+                            }
+                            monster.moveCounter++;
+                            
+                            // Move every 10 frames (adjust for speed)
+                            if (monster.moveCounter >= 10) {
+                                monster.moveCounter = 0;
+                                
+                                // Calculate new position (move 1 unit towards hero)
+                                let newX = monster.position[0];
+                                let newY = monster.position[1];
+                                
+                                // Move in the direction of the hero (discrete movement)
+                                if (Math.abs(dirX) > Math.abs(dirY)) {
+                                    newX += dirX > 0 ? 1 : -1;
+                                } else {
+                                    newY += dirY > 0 ? 1 : -1;
+                                }
+                                
+                                // Check if the new position is valid (not blocked)
+                                if (this.canMonsterMoveTo(newX, newY)) {
+                                    monster.position[0] = newX;
+                                    monster.position[1] = newY;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            canMonsterMoveTo(x, y) {
+                // Check boundaries
+                if (x < 0 || x >= this.state.world.width ||
+                    y < 0 || y >= this.state.world.height) {
+                    return false;
+                }
+                
+                // Check furniture (walls, stone are impassible)
+                for (let furniture of this.state.furniture) {
+                    if (furniture.placement.type === 'coordinate') {
+                        const pos = furniture.placement.coord;
+                        if (pos[0] === x && pos[1] === y) {
+                            if (furniture.name === 'wall' || furniture.name === 'stone') {
+                                return false;
+                            }
+                        }
+                    } else if (furniture.placement.type === 'range') {
+                        const coord1 = furniture.placement.coord1;
+                        const coord2 = furniture.placement.coord2;
+                        const minX = Math.min(coord1[0], coord2[0]);
+                        const maxX = Math.max(coord1[0], coord2[0]);
+                        const minY = Math.min(coord1[1], coord2[1]);
+                        const maxY = Math.max(coord1[1], coord2[1]);
+                        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                            if (furniture.name === 'wall' || furniture.name === 'stone') {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                
+                // Don't check collisions with other monsters/NPCs for now (monsters can overlap)
+                // But don't move into the hero's position
+                if (this.state.user.position[0] === x && this.state.user.position[1] === y) {
+                    return false;
+                }
+                
+                return true;
             }
             
             saveGame() {
